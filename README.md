@@ -33,11 +33,9 @@ So the loop is: ask the sidebar Copilot about the open board, then click the lin
 
 ## Tabs
 
-Copilot's links open a new tab. If a board tab is already open, the new tab hands the change to it over a `BroadcastChannel`, then closes itself, and Edge returns to the tab you clicked from. When the board is in a background tab, its title shows "● Updated" until you look at it. If no board tab answers within about a third of a second, or the browser froze it (Edge's sleeping tabs), the new tab simply becomes the board. A board tab coming back into view also picks up whatever another board tab saved.
+Copilot's links open a new tab, and that tab shows the change. It also has a green **← Back to Copilot** button that closes the tab, so the browser returns to the tab you clicked from. A page can close a tab that a link opened, but it can't bring another tab to the front. If the browser keeps the tab open anyway, the board tells you to press ⌘W or Ctrl+W, which does the same thing. The diagram is saved in the browser, so the next link continues from it, and any other open board tab updates live (its title shows "● Updated" while it's in the background).
 
-A page can't bring an unrelated tab to the front. Named targets (`target="kiertotie"`) only reach tabs in the same browsing context group, and Copilot's links use `noopener`, so the board can't switch you to a Copilot tab. With Copilot in the Edge sidebar there is nothing to switch, which makes it the smoothest setup. Next best is Copilot and the board in two windows side by side.
-
-Text that starts with `flowchart` replaces the diagram. Anything else is merged in: new ids are added and existing ids are relabelled. Extra merge commands: `remove a, b`, `remove a --> b`, `rename a: New label`, `mark a`, `unmark all`.
+Named targets (`target="kiertotie"`) don't help here: they only reach tabs in the same browsing context group, and Copilot's links use `noopener`. Copilot can't be framed either: its sites send `frame-ancestors` and `X-Frame-Options` headers that rule it out. With Copilot in the Edge sidebar there's no tab to return to at all.
 
 ## Getting it back out
 

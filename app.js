@@ -49,6 +49,15 @@ function readShape(s, i) {
     if (ce < 0) continue;
     return { shape, label: cleanLabel(s.slice(j, ce)), end: ce + close.length };
   }
+  // A shape that runs to the end of the line without its closing bracket: chat apps often
+  // cut the last ] or ) off a link because they read it as punctuation.
+  if (!/[-=]{2}|-\./.test(s.slice(i))) {
+    for (const [open, , shape] of SHAPES) {
+      if (!s.startsWith(open, i)) continue;
+      const label = cleanLabel(s.slice(i + open.length).replace(/[\])}>/\\]+\s*$/, ''));
+      if (label) return { shape, label, end: s.length };
+    }
+  }
   return null;
 }
 
@@ -638,16 +647,17 @@ async function decompress(s) {
   return new Response(stream).text();
 }
 
+// encodeURIComponent leaves ( ) ! * ' alone; encoding them too keeps chat apps from cutting the link short.
+const encodeLink = s => encodeURIComponent(s.replace(/\n\s*/g, ';')).replace(/[()!*']/g, c => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
+
 async function makeLink() {
   const src = toMermaid();
-  const plain = `${BASE}#m=${encodeURIComponent(src)}`;
+  const plain = `${BASE}#m=${encodeLink(src)}`;
   if (plain.length < 1800 || typeof CompressionStream === 'undefined') return plain;
   return `${BASE}#z=${await compress(src)}`;
 }
 
-// initial: this tab was just opened by the link. If a board tab is already open, the link is
-// handed to it and this tab closes, so clicking Copilot's links does not pile up tabs.
-async function readHash({ initial = false } = {}) {
+async function readHash() {
   const h = location.hash.slice(1);
   if (!h) return;
   let text = null;
@@ -657,7 +667,6 @@ async function readHash({ initial = false } = {}) {
   } catch (err) { log('error', `Could not read the link: ${err.message}`); }
   if (text == null) return;
   history.replaceState(null, '', BASE);
-  if (initial && await relay(text)) return;
   applyLink(text);
 }
 
@@ -669,78 +678,27 @@ function applyLink(text) {
 
 // ---------- tabs ----------
 
-const TAB_ID = Math.random().toString(36).slice(2);
-const bc = 'BroadcastChannel' in window ? new BroadcastChannel('kiertotie') : null;
-let lastActive = document.hasFocus() ? Date.now() : 0;
-let relaying = false;
-const sleep = ms => new Promise(r => setTimeout(r, ms));
+// A tab opened from a link (Copilot's answer) shows the change itself. Back to Copilot closes it,
+// and the browser returns to the tab that opened it. Browsers let a page close a tab like that,
+// but not bring another tab to the front.
+const openedByLink = /^#[mz]=/.test(location.hash);
 
-window.addEventListener('focus', () => { lastActive = Date.now(); document.title = 'Kiertotie'; });
-
-if (bc) bc.addEventListener('message', ({ data }) => {
-  if (!data || data.from === TAB_ID) return;
-  if (data.type === 'hello' && !relaying) bc.postMessage({ type: 'here', from: TAB_ID, to: data.from, active: lastActive });
-  if (data.type === 'apply' && data.to === TAB_ID) {
-    const r = applyLink(data.text);
-    if (!document.hasFocus()) document.title = '● Updated · Kiertotie';
-    bc.postMessage({ type: 'applied', from: TAB_ID, to: data.from, message: r.message || 'Applied' });
-  }
-});
-
-async function relay(text) {
-  if (!bc) return false;
-  relaying = true;
-  const replies = [];
-  const onHere = ({ data }) => { if (data?.type === 'here' && data.to === TAB_ID) replies.push(data); };
-  bc.addEventListener('message', onHere);
-  bc.postMessage({ type: 'hello', from: TAB_ID });
-  await sleep(350);
-  bc.removeEventListener('message', onHere);
-  if (!replies.length) { relaying = false; return false; }
-  // The board tab used most recently gets it.
-  const target = replies.sort((a, b) => b.active - a.active)[0];
-  const ack = new Promise(resolve => {
-    const onApplied = ({ data }) => {
-      if (data?.type === 'applied' && data.to === TAB_ID) { bc.removeEventListener('message', onApplied); resolve(data); }
-    };
-    bc.addEventListener('message', onApplied);
-    setTimeout(() => { bc.removeEventListener('message', onApplied); resolve(null); }, 2000);
-  });
-  bc.postMessage({ type: 'apply', from: TAB_ID, to: target.from, text });
-  const done = await ack;
-  if (!done) { relaying = false; return false; }
-  showRelayed(done.message);
-  log('link', `Sent to the open board tab: ${done.message}`);
-  // Browsers let a page close a tab that a link opened and that has no history of its own.
+function backToCopilot() {
   window.close();
-  return true;
+  setTimeout(() => toast(`The browser kept this tab open: press ${/Mac/.test(navigator.platform) ? '⌘W' : 'Ctrl+W'} to go back`), 300);
 }
 
-function showRelayed(message) {
-  const el = document.createElement('div');
-  el.className = 'relay';
-  el.innerHTML = `<div class="card" role="dialog" aria-labelledby="relay-title">
-    <strong id="relay-title">Sent to your open Kiertotie tab</strong>
-    <p class="muted small">${esc(message)}</p>
-    <div class="row"><button class="primary" data-act="close">Close this tab</button><button data-act="here">Use this tab instead</button></div>
-  </div>`;
-  el.addEventListener('click', e => {
-    const act = e.target.closest('[data-act]')?.dataset.act;
-    if (act === 'close') { window.close(); toast('The browser kept this tab open: close it with Ctrl+W'); }
-    if (act === 'here') location.reload();
-  });
-  document.body.append(el);
-}
-
-// A board tab coming back into view picks up what another tab saved meanwhile.
-let lastSaved = null;
-document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState !== 'visible' || relaying) return;
-  const raw = stored(STORE_KEY);
-  if (!raw || raw === lastSaved) return;
+// Other board tabs follow along: whatever one tab saves, the others load.
+window.addEventListener('storage', e => {
+  if (e.key !== STORE_KEY || !e.newValue || e.newValue === lastSaved) return;
   pushUndo();
-  if (load()) { lastSaved = raw; layout(); render(); $('#source').value = toMermaid(); updateReadout(); log('board', 'Updated from another Kiertotie tab'); }
+  if (!load()) return;
+  layout(); render(); $('#source').value = toMermaid(); updateReadout();
+  log('board', 'Updated from another Kiertotie tab');
+  if (document.visibilityState !== 'visible') document.title = '● Updated · Kiertotie';
 });
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') document.title = 'Kiertotie'; });
+let lastSaved = null;
 
 // ---------- WebMCP ----------
 
@@ -819,8 +777,8 @@ You cannot change the board yourself. You answer with a link that I click, and t
 
 Keep answers short: one line saying what you changed, then the link. No other explanation unless I ask.
 
-The link is ${BASE}#m= followed by diagram text, with ; between lines, %20 for spaces and %3E for >. Example:
-${BASE}#m=flowchart%20LR;web[Web%20app]%20--%3E%20api[API];api%20--%3E%20db[(SQL)]
+The link is ${BASE}#m= followed by the diagram text with ; between lines and every special character percent-encoded: space %20, > %3E, | %7C, [ %5B, ] %5D, ( %28, ) %29, { %7B, } %7D, " %22. Encode brackets even at the end, or the chat cuts them off. Example:
+${BASE}#m=${encodeLink('flowchart LR\nweb[Web app] --> api[API]\napi --> db[(SQL)]')}
 
 New diagram: Mermaid flowchart text starting with "flowchart LR" (or "flowchart TD"). Short ids, labels in brackets: web[Web app]. Shapes: [box], (rounded), ([pill]), [(database)], ((circle)), {decision}. Links: a --> b, with text a -->|HTTPS| b, dotted a -.-> b. Boundaries: subgraph azure[Azure subscription] ... end.
 
@@ -1142,10 +1100,11 @@ const SAMPLE = `flowchart LR
   setStatus('link', true, `Link: ${BASE}#m=… or #z=…`);
   setStatus('paste', true, 'Paste: Mermaid anywhere on the page');
   setStatus('command', true, 'Command box: ready (also a declarative WebMCP form)');
+  if (openedByLink) { $('#btn-back').hidden = false; $('#btn-back').addEventListener('click', backToCopilot); }
   if (stored(CLIP_KEY)) { autoClip = true; $('#btn-clip').setAttribute('aria-pressed', 'true'); setStatus('clipboard', true, 'Auto-paste: on'); }
   else setStatus('clipboard', false, 'Auto-paste: off (button in the toolbar)');
   if (restored) log('board', 'Restored the last diagram from this browser');
   fit();
   await registerWebMCP();
-  await readHash({ initial: true });
+  await readHash();
 })();
