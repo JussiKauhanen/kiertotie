@@ -1,8 +1,8 @@
 'use strict';
-// Kiertotie: a small diagram board any assistant can feed.
-// Channels in: #m= / #z= links, paste, the command box (also a declarative WebMCP form),
-// imperative WebMCP tools, and window.kiertotie. Channels out: copy for Copilot, copy link,
-// and a text readout of the diagram for assistants that read the page.
+// Kiertotie: a diagram board for an assistant that can only chat (Copilot, Claude).
+// The loop: the starter text teaches the assistant to answer with an "Open in Kiertotie" link,
+// the link opens the board, the user edits, Done copies the diagram and closes the tab,
+// and the user pastes it back into the chat. A text readout serves the Edge sidebar Copilot.
 
 const $ = s => document.querySelector(s);
 const FONT = getComputedStyle(document.body).fontFamily;
@@ -489,7 +489,7 @@ function render() {
     html += `<path class="ghost" d="M${a.x},${a.y} L${drag.to.x},${drag.to.y}"/>`;
   }
   vp.innerHTML = html;
-  $('#empty').hidden = state.nodes.size > 0 || state.groups.size > 0;
+  updateEmpty();
 }
 
 function fit() {
@@ -526,6 +526,7 @@ function commit(channel, message, { fromSource = false } = {}) {
   if (!fromSource) $('#source').value = toMermaid();
   save();
   updateReadout();
+  if (typeof updateBackButton === 'function') updateBackButton();
   if (message) log(channel, message);
 }
 
@@ -542,8 +543,7 @@ function applyText(text, channel) {
   const edgesBefore = state.edges.length;
   const hadNothing = state.nodes.size === 0;
   pushUndo();
-  // A new diagram gets a fresh layout; merged lines keep what the user arranged by hand.
-  if (replace) state.pos.clear();
+  // Boxes the user moved by hand keep their place while they are still in the diagram.
   const { warnings } = parseInto(src, { replace });
   let added = 0, changed = 0;
   flash = new Map();
@@ -593,200 +593,9 @@ function updateReadout() {
     ...[...state.nodes.values()].map(n => `Box ${names.get(n.id)} (${n.id}, ${n.shape})${n.group ? ` in ${names.get(n.group)}` : ''}.`),
     ...state.edges.map(e => `Link ${names.get(e.from) || e.from} → ${names.get(e.to) || e.to}${e.label ? `: ${e.label}` : ''}.`),
     'Mermaid source:', toMermaid(),
-    '', 'Instructions for an assistant reading this page:', copilotSetup(),
+    '', 'Instructions for an assistant reading this page:', starterText(),
   ];
   $('#readout').textContent = lines.join('\n');
-}
-
-// ---------- activity log, status, toast ----------
-
-function log(channel, message) {
-  const li = document.createElement('li');
-  const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-  li.innerHTML = `<time>${time}</time><span class="tag ${esc(channel)}">${esc(channel)}</span><span>${esc(message)}</span>`;
-  $('#log').prepend(li);
-  while ($('#log').children.length > 80) $('#log').lastChild.remove();
-}
-
-const channels = new Map();
-function setStatus(key, ok, text) {
-  channels.set(key, { ok, text });
-  $('#status').innerHTML = [...channels.values()].map(c => `<li class="${c.ok ? 'ok' : 'off'}">${esc(c.text)}</li>`).join('');
-}
-
-let toastTimer;
-function toast(msg) {
-  const t = $('#toast');
-  t.textContent = msg; t.classList.add('show');
-  clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), 2200);
-}
-
-async function copy(text, done) {
-  // Our own copies are not news for auto-paste.
-  if (typeof rememberClip === 'function') rememberClip(text);
-  try { await navigator.clipboard.writeText(text); toast(done); }
-  catch {
-    const ta = Object.assign(document.createElement('textarea'), { value: text });
-    document.body.append(ta); ta.select();
-    const ok = document.execCommand('copy'); ta.remove();
-    toast(ok ? done : 'Copy failed: select the source text and copy it by hand');
-  }
-}
-
-// ---------- links ----------
-
-const b64url = bytes => btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-const unb64url = s => Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/')), c => c.charCodeAt(0));
-
-async function compress(text) {
-  const stream = new Blob([text]).stream().pipeThrough(new CompressionStream('deflate-raw'));
-  return b64url(new Uint8Array(await new Response(stream).arrayBuffer()));
-}
-async function decompress(s) {
-  const stream = new Blob([unb64url(s)]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
-  return new Response(stream).text();
-}
-
-// encodeURIComponent leaves ( ) ! * ' alone; encoding them too keeps chat apps from cutting the link short.
-const encodeLink = s => encodeURIComponent(s.replace(/\n\s*/g, ';')).replace(/[()!*']/g, c => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
-
-async function makeLink() {
-  const src = toMermaid();
-  const plain = `${BASE}#m=${encodeLink(src)}`;
-  if (plain.length < 1800 || typeof CompressionStream === 'undefined') return plain;
-  return `${BASE}#z=${await compress(src)}`;
-}
-
-async function readHash() {
-  const h = location.hash.slice(1);
-  if (!h) return;
-  let text = null;
-  try {
-    if (h.startsWith('m=')) { const raw = h.slice(2); try { text = decodeURIComponent(raw); } catch { text = raw; } }
-    else if (h.startsWith('z=')) text = await decompress(h.slice(2));
-  } catch (err) { log('error', `Could not read the link: ${err.message}`); }
-  if (text == null) return;
-  history.replaceState(null, '', BASE);
-  applyLink(text);
-}
-
-function applyLink(text) {
-  const r = applyText(text, 'link');
-  setStatus('link', true, `Link: last opened ${new Date().toLocaleTimeString()} (${r.message || 'ok'})`);
-  return r;
-}
-
-// ---------- tabs ----------
-
-// A tab opened from a link (Copilot's answer) shows the change itself. Back to Copilot closes it,
-// and the browser returns to the tab that opened it. Browsers let a page close a tab like that,
-// but not bring another tab to the front.
-const openedByLink = /^#[mz]=/.test(location.hash);
-
-function backToCopilot() {
-  window.close();
-  setTimeout(() => toast(`The browser kept this tab open: press ${/Mac/.test(navigator.platform) ? '⌘W' : 'Ctrl+W'} to go back`), 300);
-}
-
-// Other board tabs follow along: whatever one tab saves, the others load.
-window.addEventListener('storage', e => {
-  if (e.key !== STORE_KEY || !e.newValue || e.newValue === lastSaved) return;
-  pushUndo();
-  if (!load()) return;
-  layout(); render(); $('#source').value = toMermaid(); updateReadout();
-  log('board', 'Updated from another Kiertotie tab');
-  if (document.visibilityState !== 'visible') document.title = '● Updated · Kiertotie';
-});
-document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') document.title = 'Kiertotie'; });
-let lastSaved = null;
-
-// ---------- WebMCP ----------
-
-const TOOLS = [
-  {
-    name: 'get_diagram',
-    description: 'Read the diagram on the Kiertotie board: its Mermaid flowchart source and the ids the user highlighted (the items they want changed or are asking about).',
-    inputSchema: { type: 'object', properties: {} },
-    annotations: { readOnlyHint: true, untrustedContentHint: true },
-    run: () => ({ mermaid: toMermaid(), highlighted: markedItems().map(x => x.id), selected: sel?.type === 'edge' ? null : sel?.id ?? null }),
-  },
-  {
-    name: 'set_diagram',
-    description: 'Replace the whole diagram with a Mermaid flowchart. Start with "flowchart LR" or "flowchart TD". Use subgraph ... end for boundaries, A[Label] boxes, A[(Label)] databases, A{Label} decisions, A -->|text| B links.',
-    inputSchema: { type: 'object', properties: { mermaid: { type: 'string', description: 'Mermaid flowchart text starting with "flowchart".' } }, required: ['mermaid'] },
-    run: ({ mermaid }) => applyText(/^\s*(flowchart|graph)\b/i.test(mermaid) ? mermaid : `flowchart LR\n${mermaid}`, 'webmcp'),
-  },
-  {
-    name: 'update_diagram',
-    description: 'Change part of the diagram. Give Mermaid lines without the "flowchart" header; they are merged in: new ids are added, existing ids are relabelled. Extra commands: "remove A, B", "remove A --> B", "rename A: New label", "mark A", "unmark all".',
-    inputSchema: { type: 'object', properties: { lines: { type: 'string', description: 'Mermaid lines to merge, one per line.' } }, required: ['lines'] },
-    run: ({ lines }) => applyText(String(lines).replace(/^\s*(flowchart|graph)\b[^\n]*\n?/i, ''), 'webmcp'),
-  },
-  {
-    name: 'remove_items',
-    description: 'Remove boxes or groups from the diagram by id, together with their links.',
-    inputSchema: { type: 'object', properties: { ids: { type: 'array', items: { type: 'string' } } }, required: ['ids'] },
-    run: ({ ids }) => applyText(`remove ${(ids || []).join(', ')}`, 'webmcp'),
-  },
-];
-
-async function registerWebMCP() {
-  const mc = document.modelContext || navigator.modelContext;
-  const where = document.modelContext ? 'document.modelContext' : navigator.modelContext ? 'navigator.modelContext' : null;
-  if (!mc) { setStatus('webmcp', false, 'WebMCP: not in this browser (no document.modelContext)'); return; }
-  const wrapped = TOOLS.map(({ run, ...t }) => ({
-    ...t,
-    execute: async args => {
-      log('webmcp', `${t.name} called`);
-      try { const r = await run(args || {}); return typeof r === 'string' ? r : JSON.stringify(r); }
-      catch (err) { log('error', `${t.name}: ${err.message}`); throw err; }
-    },
-  }));
-  let count = 0;
-  try {
-    if (typeof mc.registerTool === 'function') {
-      for (const t of wrapped) { try { await mc.registerTool(t); count++; } catch (err) { log('error', `WebMCP ${t.name}: ${err.message}`); } }
-    } else if (typeof mc.provideContext === 'function') {
-      mc.provideContext({ tools: wrapped }); count = wrapped.length;
-    }
-  } catch (err) { log('error', `WebMCP: ${err.message}`); }
-  setStatus('webmcp', count > 0, count ? `WebMCP: ${count} tools on ${where}, waiting for calls` : `WebMCP: ${where} found but registering failed`);
-  if (count) log('webmcp', `Registered ${count} tools on ${where}`);
-}
-
-// ---------- copying out ----------
-
-function copilotPacket() {
-  const marked = markedItems();
-  const names = marked.map(x => `${x.id} ("${(x.label || x.title).replace(/\n/g, ' ')}")`);
-  return [
-    'This is my current Kiertotie diagram.',
-    marked.length ? `I highlighted: ${names.join(', ')}. My request is about those.` : 'Nothing is highlighted.',
-    '',
-    '```mermaid',
-    toMermaid(),
-    '```',
-    '',
-    'My request: ',
-  ].join('\n');
-}
-
-function copilotSetup() {
-  return `You help me draw diagrams on my Kiertotie board at ${BASE}
-You cannot change the board yourself. You answer with a link that I click, and the board applies it.
-
-Keep answers short: one line saying what you changed, then the link. No other explanation unless I ask.
-
-The link is ${BASE}#m= followed by the diagram text with ; between lines and every special character percent-encoded: space %20, > %3E, | %7C, [ %5B, ] %5D, ( %28, ) %29, { %7B, } %7D, " %22. Encode brackets even at the end, or the chat cuts them off. Example:
-${BASE}#m=${encodeLink('flowchart LR\nweb[Web app] --> api[API]\napi --> db[(SQL)]')}
-
-New diagram: Mermaid flowchart text starting with "flowchart LR" (or "flowchart TD"). Short ids, labels in brackets: web[Web app]. Shapes: [box], (rounded), ([pill]), [(database)], ((circle)), {decision}. Links: a --> b, with text a -->|HTTPS| b, dotted a -.-> b. Boundaries: subgraph azure[Azure subscription] ... end.
-
-Change to the diagram I have: only the lines that change, no "flowchart" line, and keep the ids already in use. A line with an existing id updates that item. Commands: remove a, b · remove a --> b · rename a: New label · mark a · unmark all.
-
-Items marked with "class ... marked" (or listed as highlighted) are the ones my request is about.
-
-If the link would be longer than about 1500 characters, also give the same text in a plain text code block (not a mermaid block) so I can copy it.`;
 }
 
 // ---------- interaction ----------
@@ -982,44 +791,135 @@ document.addEventListener('paste', e => {
   applyText(text, 'paste');
 });
 
-// Auto-paste: when the tab comes back into view, apply new diagram text from the clipboard.
-// Opt-in, because reading the clipboard needs the browser's permission.
-const CLIP_KEY = 'kiertotie.clip';
-let autoClip = false;
-const store = (k, v) => { try { v == null ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch { /* storage unavailable */ } };
-const stored = k => { try { return localStorage.getItem(k); } catch { return null; } };
-let lastClip = stored(`${CLIP_KEY}.last`);
+// ---------- messages ----------
 
-function rememberClip(text) { lastClip = text; store(`${CLIP_KEY}.last`, text.length < 20000 ? text : null); }
-
-async function readClip() {
-  try { return await navigator.clipboard.readText(); }
-  catch (err) { setStatus('clipboard', false, `Auto-paste: the browser blocked reading the clipboard (${err.name})`); return null; }
+function log(channel, message) {
+  const li = document.createElement('li');
+  const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  li.innerHTML = `<time>${time}</time><span class="tag ${esc(channel)}">${esc(channel)}</span><span>${esc(message)}</span>`;
+  $('#log').prepend(li);
+  while ($('#log').children.length > 80) $('#log').lastChild.remove();
 }
 
-async function checkClipboard() {
-  if (!autoClip || document.visibilityState !== 'visible' || !document.hasFocus()) return;
-  const text = await readClip();
-  if (!text || text === lastClip) return;
-  rememberClip(text);
-  if (looksLikeDiagram(text)) applyText(text, 'clipboard');
+let toastTimer;
+function toast(msg, ms = 2600) {
+  const t = $('#toast');
+  t.textContent = msg; t.classList.add('show');
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), ms);
 }
 
-async function setAutoClip(on) {
-  autoClip = on;
-  $('#btn-clip').setAttribute('aria-pressed', String(on));
-  store(CLIP_KEY, on ? '1' : null);
-  if (!on) { setStatus('clipboard', false, 'Auto-paste: off'); return; }
-  // What is on the clipboard when it is switched on is not new, so it is not applied.
-  const text = await readClip();
-  if (text == null) return;
-  rememberClip(text);
-  setStatus('clipboard', true, 'Auto-paste: on, applies diagram text you copy when you come back to this tab');
+async function copyText(text) {
+  try { await navigator.clipboard.writeText(text); return true; }
+  catch {
+    const ta = Object.assign(document.createElement('textarea'), { value: text });
+    document.body.append(ta); ta.select();
+    const ok = document.execCommand('copy'); ta.remove();
+    return ok;
+  }
 }
 
-$('#btn-clip').addEventListener('click', () => setAutoClip(!autoClip).then(() => toast(autoClip ? 'Auto-paste on: copy Copilot\'s answer, then come back here' : 'Auto-paste off')));
-window.addEventListener('focus', () => setTimeout(checkClipboard, 50));
-document.addEventListener('visibilitychange', () => setTimeout(checkClipboard, 50));
+function showNote(note) {
+  $('#note-text').textContent = note;
+  $('#note').hidden = !note;
+}
+
+// ---------- texts for the assistant ----------
+
+// encodeURIComponent leaves ( ) ! * ' alone; encoding them too keeps chat apps from cutting the link short.
+const encodeLink = s => encodeURIComponent(s.replace(/\n\s*/g, ';')).replace(/[()!*']/g, c => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
+const FOOTER = 'Edit on the board if you like, then press Done there and paste here (Ctrl+V) with your next request.';
+const exampleLink = () => `${BASE}#note=${encodeLink('Drew the web app and its API')}&m=${encodeLink('flowchart LR\nweb[Web app] -->|HTTPS| api[API]\napi --> db[(SQL)]')}`;
+
+const RULES = () => `Every reply has exactly three parts:
+1. One short line saying what you drew or changed.
+2. A Markdown link with the text "Open in Kiertotie" to ${BASE}#note=<your line>&m=<the whole diagram>
+3. This line, word for word: "${FOOTER}"
+No other text, unless I ask a question.
+
+The diagram is a Mermaid flowchart, and always the whole diagram, never only the changes:
+- Start with flowchart LR (or flowchart TD for tall diagrams).
+- Short ids with the label in brackets: web[Web app]. Shapes: [box] (rounded) ([pill]) [(database)] ((circle)) {decision}.
+- Links: a --> b, with text a -->|HTTPS| b, dotted a -.-> b.
+- Boundaries: subgraph azure[Azure subscription] ... end.
+- Keep the ids the diagram already has. "class x marked" means I highlighted x: my request is about those.
+
+In the link, put ; between lines and percent-encode everything else, in the note too: space %20, > %3E, | %7C, [ %5B, ] %5D, ( %28, ) %29, { %7B, } %7D, " %22, & %26, # %23. Example:
+[Open in Kiertotie](${exampleLink()})`;
+
+function starterText() {
+  return `You are my diagram assistant. I draw on the Kiertotie board at ${BASE}
+You can't open the board yourself: you answer with a link that I click, and the board shows the diagram.
+
+${RULES()}
+
+My first request: `;
+}
+
+function donePacket() {
+  const marked = markedItems();
+  const names = marked.map(x => `${x.id} (${(x.label || x.title).replace(/\n/g, ' ')})`);
+  return `Here is my Kiertotie diagram as it is now.${marked.length ? ` I highlighted ${names.join(', ')}: my request is about those.` : ''}
+
+\`\`\`mermaid
+${toMermaid()}
+\`\`\`
+
+Reply as before. Reminder:
+${RULES()}
+
+My request: `;
+}
+
+// ---------- links ----------
+
+// #note=<line from the assistant>&m=<Mermaid>. The note comes first, so & inside the diagram is harmless.
+function parseHash(h) {
+  const decode = s => { try { return decodeURIComponent(s); } catch { return s; } };
+  let note = '', m = null;
+  if (h.startsWith('note=')) {
+    const at = h.indexOf('&m=');
+    if (at < 0) return null;
+    note = decode(h.slice(5, at)); m = h.slice(at + 3);
+  } else if (h.startsWith('m=')) m = h.slice(2);
+  else return null;
+  return { note: note.trim(), text: decode(m) };
+}
+
+function readHash() {
+  const link = parseHash(location.hash.slice(1));
+  if (!link) return;
+  history.replaceState(null, '', BASE);
+  applyText(link.text, 'link');
+  showNote(link.note);
+  updateEmpty();
+}
+
+// ---------- tabs ----------
+
+// A tab opened from the assistant's link: Done closes it and the browser returns to the chat.
+// Browsers let a page close a tab that a link opened, but not bring another tab to the front.
+const openedByLink = /^#(m|note)=/.test(location.hash);
+const key = /Mac/.test(navigator.platform) ? '⌘' : 'Ctrl+';
+
+async function done() {
+  const ok = await copyText(donePacket());
+  if (!ok) { toast('Copying failed: open More → Show source and copy the text by hand', 5000); return; }
+  window.close();
+  // Still here: the browser does not let this tab close itself (it was not opened from a link).
+  setTimeout(() => toast(`Copied. Go to Copilot, press ${key}V and add your request.`, 5000), 250);
+}
+
+// Other board tabs follow along: whatever one tab saves, the others load.
+let lastSaved = null;
+window.addEventListener('storage', e => {
+  if (e.key !== STORE_KEY || !e.newValue || e.newValue === lastSaved) return;
+  pushUndo();
+  if (!load()) return;
+  layout(); render(); $('#source').value = toMermaid(); updateReadout(); updateEmpty();
+  log('board', 'Updated from another Kiertotie tab');
+});
+
+// ---------- controls ----------
 
 function setMarkMode(on) {
   markMode = on;
@@ -1028,51 +928,59 @@ function setMarkMode(on) {
   if (on) toast('Click boxes or group titles to highlight them. Esc to stop.');
 }
 
+function updateEmpty() {
+  const empty = state.nodes.size === 0 && state.groups.size === 0;
+  $('#start').hidden = !empty;
+  $('#btn-done').hidden = empty;
+}
+
+async function copyStarter(btn) {
+  const ok = await copyText(starterText());
+  const label = btn.dataset.label || (btn.dataset.label = btn.textContent);
+  btn.textContent = ok ? 'Copied ✓' : 'Copy failed';
+  setTimeout(() => { btn.textContent = label; }, 2000);
+  if (ok) toast('Now paste it into Copilot (or Claude) and say what you want drawn.', 5000);
+}
+
+function closeMore() { $('#more').open = false; }
+
 $('#btn-mark').addEventListener('click', () => setMarkMode(!markMode));
 $('#btn-undo').addEventListener('click', undo);
-$('#btn-fit').addEventListener('click', fit);
-$('#btn-tidy').addEventListener('click', () => { pushUndo(); state.pos.clear(); commit('board', 'Tidied up the layout'); fit(); });
-$('#btn-link').addEventListener('click', async () => copy(await makeLink(), 'Link copied'));
-$('#btn-copy').addEventListener('click', () => copy(copilotPacket(), 'Copied: paste it into Copilot and add your request'));
-$('#btn-setup').addEventListener('click', () => copy(copilotSetup(), 'Setup copied: paste it into Copilot once per chat'));
-$('#btn-sample').addEventListener('click', () => applyText(SAMPLE, 'sample'));
-
-$('#cmd-form').addEventListener('submit', e => {
-  e.preventDefault();
-  const text = $('#cmd').value;
-  // An agent filling the declarative WebMCP form submits it without a user click.
-  const channel = e.agentInvoked ? 'webmcp' : 'command';
-  const r = applyText(text, channel);
-  if (r.ok) $('#cmd').value = '';
-  if (typeof e.respondWith === 'function') e.respondWith(Promise.resolve(JSON.stringify(r)));
+$('#btn-done').addEventListener('click', done);
+$('#btn-starter').addEventListener('click', e => copyStarter(e.currentTarget));
+$('#start-sample').addEventListener('click', () => { applyText(SAMPLE, 'sample'); updateEmpty(); });
+$('#note-close').addEventListener('click', () => showNote(''));
+$('#more').addEventListener('click', e => {
+  const act = e.target.closest('[data-act]')?.dataset.act;
+  if (!act) return;
+  closeMore();
+  if (act === 'tidy') { pushUndo(); state.pos.clear(); commit('board', 'Tidied up the layout'); fit(); }
+  if (act === 'fit') fit();
+  if (act === 'starter') copyStarter($('#btn-starter'));
+  if (act === 'source') { document.body.classList.toggle('show-panel'); render(); }
+  if (act === 'new') {
+    if (!confirm('Start a new diagram? You can undo this.')) return;
+    pushUndo(); parseInto('flowchart LR', { replace: true }); state.pos.clear(); showNote(''); commit('board', 'Started over'); updateEmpty();
+  }
 });
-$('#cmd').addEventListener('keydown', e => {
-  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); $('#cmd-form').requestSubmit(); }
-});
+document.addEventListener('click', e => { if (!e.target.closest('#more')) closeMore(); });
 
 let sourceTimer;
 $('#source').addEventListener('input', () => {
   clearTimeout(sourceTimer);
   sourceTimer = setTimeout(() => {
-    const text = $('#source').value;
     pushUndo();
-    const { warnings } = parseInto(text, { replace: true });
+    const { warnings } = parseInto($('#source').value, { replace: true });
     $('#source-msg').textContent = warnings.length ? warnings.slice(0, 3).join(' · ') : '';
     commit('source', 'Edited the source', { fromSource: true });
+    updateEmpty();
   }, 450);
 });
 
+// Pasting a diagram anywhere also works, for when a link comes out broken.
+document.addEventListener('paste', () => setTimeout(updateEmpty, 0));
 window.addEventListener('hashchange', readHash);
 window.addEventListener('resize', () => render());
-
-// For console testing and for any agent that can run page scripts.
-window.kiertotie = {
-  get: () => TOOLS[0].run(),
-  set: mermaid => TOOLS[1].run({ mermaid }),
-  update: lines => TOOLS[2].run({ lines }),
-  remove: ids => TOOLS[3].run({ ids }),
-  tools: TOOLS,
-};
 
 const SAMPLE = `flowchart LR
   user([Consultant])
@@ -1092,19 +1000,13 @@ const SAMPLE = `flowchart LR
 
 // ---------- start ----------
 
-(async function start() {
-  const restored = load();
+(function start() {
+  load();
   layout();
   $('#source').value = toMermaid();
   updateReadout();
-  setStatus('link', true, `Link: ${BASE}#m=… or #z=…`);
-  setStatus('paste', true, 'Paste: Mermaid anywhere on the page');
-  setStatus('command', true, 'Command box: ready (also a declarative WebMCP form)');
-  if (openedByLink) { $('#btn-back').hidden = false; $('#btn-back').addEventListener('click', backToCopilot); }
-  if (stored(CLIP_KEY)) { autoClip = true; $('#btn-clip').setAttribute('aria-pressed', 'true'); setStatus('clipboard', true, 'Auto-paste: on'); }
-  else setStatus('clipboard', false, 'Auto-paste: off (button in the toolbar)');
-  if (restored) log('board', 'Restored the last diagram from this browser');
+  if (openedByLink) $('#btn-done').textContent = '✓ Done – back to Copilot';
   fit();
-  await registerWebMCP();
-  await readHash();
+  readHash();
+  updateEmpty();
 })();

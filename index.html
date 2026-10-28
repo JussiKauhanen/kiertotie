@@ -4,25 +4,34 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Kiertotie</title>
-<meta name="description" content="A small diagram board that takes diagrams from any assistant: links, pasted Mermaid, a command box, or WebMCP tools.">
+<meta name="description" content="A diagram board for assistants that can only chat: they answer with a link, you edit, Done sends it back.">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
 <header class="bar">
-  <div class="brand"><strong>Kiertotie</strong><span class="sub">diagram board for any assistant</span></div>
+  <div class="brand"><strong>Kiertotie</strong></div>
   <div class="tools" role="toolbar" aria-label="Board actions">
-    <button id="btn-back" hidden title="Close this tab and go back to the tab you came from">← Back to Copilot</button>
-    <button id="btn-mark" aria-pressed="false" title="Highlight items for the assistant (M)">Highlight</button>
+    <button id="btn-mark" aria-pressed="false" title="Mark boxes your next request is about (M)">Highlight</button>
     <button id="btn-undo" title="Undo (Ctrl+Z)">Undo</button>
-    <button id="btn-tidy" title="Lay everything out again">Tidy up</button>
-    <button id="btn-fit" title="Fit to screen (F)">Fit</button>
-    <span class="sep"></span>
-    <button id="btn-clip" aria-pressed="false" title="Apply diagram text you copy elsewhere when you come back to this tab">Auto-paste</button>
-    <button id="btn-link" title="Copy a link that opens this diagram">Copy link</button>
-    <button id="btn-copy" class="primary" title="Copy the diagram and your highlights to paste into Copilot">Copy for Copilot</button>
-    <button id="btn-setup" title="Copy instructions that teach Copilot this board">Copilot setup</button>
+    <details id="more" class="more">
+      <summary>More</summary>
+      <div class="menu" role="menu">
+        <button data-act="tidy" role="menuitem">Tidy up the layout</button>
+        <button data-act="fit" role="menuitem">Fit to screen</button>
+        <button data-act="starter" role="menuitem">Copy starter for Copilot</button>
+        <button data-act="source" role="menuitem">Show source and activity</button>
+        <button data-act="new" role="menuitem">Start a new diagram</button>
+      </div>
+    </details>
+    <button id="btn-done" class="done" hidden title="Copy the diagram for Copilot and close this tab">✓ Done – copy for Copilot</button>
   </div>
 </header>
+
+<div id="note" class="note" hidden role="status">
+  <span class="note-label">Latest change</span>
+  <span id="note-text"></span>
+  <button id="note-close" aria-label="Hide">✕</button>
+</div>
 
 <main class="layout">
   <section class="board-wrap" aria-label="Diagram board">
@@ -37,39 +46,26 @@
       </defs>
       <g id="viewport"></g>
     </svg>
-    <div id="empty" class="empty">
-      <p><strong>Nothing here yet.</strong></p>
-      <p>Paste Mermaid anywhere, open a link ending in <code>#m=…</code>, type in the box on the right, or double-click to add a box.</p>
-      <button id="btn-sample">Load a sample</button>
+
+    <div id="start" class="start" hidden>
+      <h1>Draw with Copilot</h1>
+      <ol>
+        <li><button id="btn-starter" class="big">Copy starter for Copilot</button></li>
+        <li>Paste it into Copilot (or Claude) and say what you want drawn.</li>
+        <li>Click <strong>Open in Kiertotie</strong> in its answer.</li>
+      </ol>
+      <button id="start-sample" class="link">or look at a sample first</button>
     </div>
-    <p class="hint">Drag to move · Shift-drag from a box to connect · Double-click to edit · Delete removes</p>
+
+    <p class="hint">Drag to move · Shift-drag to connect · Double-click to edit · Delete removes</p>
   </section>
 
   <aside class="panel">
-    <form id="cmd-form" class="card"
-          toolname="send_diagram_text"
-          tooldescription="Send Mermaid flowchart text to the Kiertotie board. Text starting with 'flowchart' replaces the diagram; other lines are merged into it.">
-      <label for="cmd" class="card-title">Send to diagram</label>
-      <textarea id="cmd" name="mermaid" rows="5" spellcheck="false"
-                toolparamdescription="Mermaid flowchart text, or lines to merge such as 'A --> B[New box]' or 'remove A'."
-                placeholder="flowchart LR&#10;  web[Web app] --> api[API]&#10;&#10;or just: api --> db[(Database)]"></textarea>
-      <div class="row">
-        <button type="submit" id="cmd-apply" class="primary">Apply to diagram</button>
-        <span class="muted small">Starts with <code>flowchart</code> → replaces. Otherwise → merges.</span>
-      </div>
-    </form>
-
     <div class="card">
       <label for="source" class="card-title">Source (Mermaid)</label>
-      <textarea id="source" rows="10" spellcheck="false" aria-describedby="source-msg"></textarea>
+      <textarea id="source" rows="12" spellcheck="false" aria-describedby="source-msg"></textarea>
       <p id="source-msg" class="muted small"></p>
     </div>
-
-    <div class="card">
-      <div class="card-title">Channels</div>
-      <ul id="status" class="status"></ul>
-    </div>
-
     <div class="card grow">
       <div class="card-title">Activity</div>
       <ol id="log" class="log"></ol>

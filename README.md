@@ -1,68 +1,40 @@
 # kiertotie
 
-A small diagram board that takes its diagrams from whatever assistant you are allowed to use. The idea: on a work machine where only Copilot is reachable, Copilot does the thinking and this page does the drawing and editing. No API keys and no calls out: the page is static and everything stays in the browser.
+A diagram board for an assistant that can only chat. It's built for a work machine where Copilot is the only AI you're allowed, and it works the same with Claude. The assistant does the thinking and answers with a link; the board does the drawing and editing. There's no backend and no API key, and the diagram travels in the `#` part of the link, so it never reaches GitHub.
 
-Open it at `https://jussikauhanen.github.io/kiertotie/` once GitHub Pages is on, or locally:
+https://jussikauhanen.github.io/kiertotie/
 
-```bash
-python3 -m http.server 8130
-```
+## The loop
 
-## How a diagram gets in
+1. **Start:** open Kiertotie and press **Copy starter for Copilot**. Paste it into Copilot (or Claude) and say what you want drawn.
+2. **The assistant answers** with one line saying what it drew, an **Open in Kiertotie** link, and a footer saying what to do next. Every answer has the same three parts.
+3. **The board opens** in a new tab, showing the assistant's line in a banner. New and changed boxes flash.
+4. **You edit:** drag, double-click to rename, Delete to remove, Shift-drag to connect. **Highlight** marks the boxes your next request is about.
+5. **Done – back to Copilot** copies the diagram (with your highlights and a short reminder of the reply format), then closes the tab. The browser returns to the chat.
+6. **In the chat:** press Ctrl+V (⌘V), type your request and send. Back to step 2.
 
-The page listens on every channel at once and the **Activity** list names the channel each change came from, so a test shows straight away which one works.
+Every paste carries the reply rules again, so even a long chat doesn't drift from the format.
 
-| Channel | How | Needs |
-| --- | --- | --- |
-| **Link** | Copilot writes `…/kiertotie/#m=flowchart LR;web[Web app] --> api[API]` and you click it. `#z=` is the compressed form **Copy link** makes for long diagrams. The diagram is in the `#` part, so it is never sent to GitHub. | Copilot can write links |
-| **Paste** | Copy Mermaid from Copilot and paste anywhere on the page. Code fences are fine. | Nothing |
-| **Auto-paste** | Turn on **Auto-paste**, copy Copilot's answer, come back to the tab: new diagram text on the clipboard is applied. Text that was already there when you turned it on, plain sentences and the board's own copies are ignored. | Edge allows clipboard reading |
-| **Command box** | **Send to diagram** on the right. Also what an agent-mode browser would type into and click. | Nothing |
-| **WebMCP (imperative)** | The page registers `get_diagram`, `set_diagram`, `update_diagram` and `remove_items` on `document.modelContext` (or the older `navigator.modelContext`). | A browser with WebMCP on **and** an assistant that calls page tools |
-| **WebMCP (declarative)** | The command box is a `<form toolname="send_diagram_text">`. | Same |
-| **Page reading** | A hidden text section, *Diagram for assistants*, describes every box, group, link and highlight in plain words. After that come the Mermaid and the same instructions as **Copilot setup**, so the Edge sidebar Copilot learns the link format from the page itself. | Copilot allowed to read the page |
+**With Copilot in the Edge sidebar** you can skip steps 5 and 6. The sidebar reads the open board directly, through a hidden text description that includes the highlights and the reply rules.
 
-## What works on a locked-down work machine
+## Details
 
-Tested October 2026 with Edge and Microsoft 365 Copilot, where every other AI domain is blocked:
+- The link is `#note=<the assistant's line>&m=<the whole diagram as Mermaid>`, percent-encoded, with `;` between lines. The assistant always sends the whole diagram. Boxes you moved by hand keep their place if they're still in it.
+- A shape that's missing its closing bracket at the end of the link is still read, because chat apps often cut a trailing `]` or `)` off a link.
+- If a link comes out broken, paste the diagram text anywhere on the board instead.
+- The diagram is kept in the browser. Open board tabs update each other live.
+- **More** holds Tidy up, Fit, Copy starter, Show source and activity (the Mermaid editor and a log of changes), and Start a new diagram.
 
-- **Works:** Copilot in the Edge sidebar reads the board, including highlights, and its "open in Kiertotie" links apply changes when clicked.
-- **Doesn't work:** WebMCP. The flag is reset by policy, and Copilot has no interactive browser, so it can't use the command box either.
+## Limits we found (October 2026)
 
-So the loop is: ask the sidebar Copilot about the open board, then click the link it answers with.
-
-## Tabs
-
-Copilot's links open a new tab, and that tab shows the change. It also has a green **← Back to Copilot** button that closes the tab, so the browser returns to the tab you clicked from. A page can close a tab that a link opened, but it can't bring another tab to the front. If the browser keeps the tab open anyway, the board tells you to press ⌘W or Ctrl+W, which does the same thing. The diagram is saved in the browser, so the next link continues from it, and any other open board tab updates live (its title shows "● Updated" while it's in the background).
-
-Named targets (`target="kiertotie"`) don't help here: they only reach tabs in the same browsing context group, and Copilot's links use `noopener`. Copilot can't be framed either: its sites send `frame-ancestors` and `X-Frame-Options` headers that rule it out. With Copilot in the Edge sidebar there's no tab to return to at all.
-
-## Getting it back out
-
-- **Copy for Copilot** copies the Mermaid plus a line naming what you highlighted, ready to paste back into Copilot with your request.
-- **Highlight** (or **M**) and click boxes or group titles to mark them yellow, much like the orim highlighter. Highlights appear in the Mermaid as `class … marked` and in the page readout.
-- **Copilot setup** copies a one-time instruction that teaches Copilot the format and the link pattern. Paste it at the start of a Copilot chat.
-
-## Editing
-
-Drag boxes and groups (a group carries its contents). **Shift**-drag from one box to another to link them. Double-click a box, group title or link to edit its text; double-click empty space to add a box. **Delete** removes the selection, **Ctrl/⌘+Z** undoes, **Tidy up** lays everything out again and **F** fits the view. Dragging the empty board pans, and the wheel or pinch zooms. The Mermaid source on the right is live in both directions. The last diagram is kept in this browser.
-
-## Test plan on the work machine
-
-Try these in order and note what the Activity list says each time.
-
-1. Open the Pages URL. If it doesn't load, the domain is blocked and the test stops there. Fallbacks: a raw file share, SharePoint, or a local file (`file://`, where the link channel won't work but paste and the command box will).
-2. Paste the **Copilot setup** text into Copilot and ask for a diagram ("how does an AD group end up granting access to an Azure web app?").
-   - Does Copilot give a link, and does the link open the diagram? → `link`
-   - If the link is mangled, does pasting its code block work? → `paste`
-3. Highlight two boxes, click **Copy for Copilot**, paste into Copilot with a change request, and apply its answer. This is the round trip that replaces the built-in AI in orim.
-4. With the board open in Edge, ask Copilot in the sidebar about "this page". Can it see the diagram (the readout)? Can it make a change by itself in agent or Actions mode, through the command box?
-5. Check **Channels → WebMCP**. "not in this browser" means Edge has no WebMCP here. If it says tools are registered, ask Copilot to use them and look for `webmcp · … called` in the Activity list.
-
-As of October 2026, WebMCP is a draft that has moved from `navigator.modelContext` to `document.modelContext`. Chrome has it in an origin trial and Edge behind a flag, and no mainstream assistant is confirmed to call page tools yet. So steps 2–3 are the realistic path today, and step 5 is there to catch support when it arrives.
+- **WebMCP:** no use here. It's a draft API behind a flag, Edge resets the flag by policy on the work machine, and no assistant calls page tools yet.
+- **Copilot acting on the page:** it has no interactive browser, so it can't click or type on the board.
+- **Bringing the Copilot tab to the front:** a page can't do that. Named targets only reach related tabs, and Copilot's links use `noopener`. What a page can do is close a tab that a link opened, which is how Done works.
+- **Framing:** the Copilot sites send `frame-ancestors` and `X-Frame-Options` headers that rule out embedding them, and chat can't embed the board either.
+- **Sharing storage:** localStorage, IndexedDB and BroadcastChannel are per site, so Copilot's pages can't read the board's data.
 
 ## Files
 
-- `index.html`: page structure, including the declarative WebMCP form
+- `index.html`: toolbar, start screen, banner and the hidden panel
 - `style.css`: light and dark themes
-- `app.js`: Mermaid flowchart subset parser and writer, layered layout with group bands, SVG board, the input channels and WebMCP tools. `window.kiertotie` (`get`, `set`, `update`, `remove`) drives it from the console.
+- `app.js`: Mermaid flowchart subset parser and writer, layered layout with group bands, SVG board and editing, the link and Done loop, and the starter text
