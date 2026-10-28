@@ -553,12 +553,14 @@ function applyText(text, channel) {
 }
 
 function save() {
-  try { localStorage.setItem(STORE_KEY, JSON.stringify({ src: toMermaid(), pos: [...state.pos] })); } catch { /* storage unavailable */ }
+  lastSaved = JSON.stringify({ src: toMermaid(), pos: [...state.pos] });
+  try { localStorage.setItem(STORE_KEY, lastSaved); } catch { /* storage unavailable */ }
 }
 function load() {
   try {
     const raw = localStorage.getItem(STORE_KEY);
     if (!raw) return false;
+    lastSaved = raw;
     const { src, pos } = JSON.parse(raw);
     parseInto(src, { replace: true });
     state.pos = new Map(pos || []);
@@ -582,6 +584,7 @@ function updateReadout() {
     ...[...state.nodes.values()].map(n => `Box ${names.get(n.id)} (${n.id}, ${n.shape})${n.group ? ` in ${names.get(n.group)}` : ''}.`),
     ...state.edges.map(e => `Link ${names.get(e.from) || e.from} → ${names.get(e.to) || e.to}${e.label ? `: ${e.label}` : ''}.`),
     'Mermaid source:', toMermaid(),
+    '', 'Instructions for an assistant reading this page:', copilotSetup(),
   ];
   $('#readout').textContent = lines.join('\n');
 }
@@ -610,6 +613,8 @@ function toast(msg) {
 }
 
 async function copy(text, done) {
+  // Our own copies are not news for auto-paste.
+  if (typeof rememberClip === 'function') rememberClip(text);
   try { await navigator.clipboard.writeText(text); toast(done); }
   catch {
     const ta = Object.assign(document.createElement('textarea'), { value: text });
@@ -640,7 +645,9 @@ async function makeLink() {
   return `${BASE}#z=${await compress(src)}`;
 }
 
-async function readHash() {
+// initial: this tab was just opened by the link. If a board tab is already open, the link is
+// handed to it and this tab closes, so clicking Copilot's links does not pile up tabs.
+async function readHash({ initial = false } = {}) {
   const h = location.hash.slice(1);
   if (!h) return;
   let text = null;
@@ -650,9 +657,90 @@ async function readHash() {
   } catch (err) { log('error', `Could not read the link: ${err.message}`); }
   if (text == null) return;
   history.replaceState(null, '', BASE);
+  if (initial && await relay(text)) return;
+  applyLink(text);
+}
+
+function applyLink(text) {
   const r = applyText(text, 'link');
   setStatus('link', true, `Link: last opened ${new Date().toLocaleTimeString()} (${r.message || 'ok'})`);
+  return r;
 }
+
+// ---------- tabs ----------
+
+const TAB_ID = Math.random().toString(36).slice(2);
+const bc = 'BroadcastChannel' in window ? new BroadcastChannel('kiertotie') : null;
+let lastActive = document.hasFocus() ? Date.now() : 0;
+let relaying = false;
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+window.addEventListener('focus', () => { lastActive = Date.now(); document.title = 'Kiertotie'; });
+
+if (bc) bc.addEventListener('message', ({ data }) => {
+  if (!data || data.from === TAB_ID) return;
+  if (data.type === 'hello' && !relaying) bc.postMessage({ type: 'here', from: TAB_ID, to: data.from, active: lastActive });
+  if (data.type === 'apply' && data.to === TAB_ID) {
+    const r = applyLink(data.text);
+    if (!document.hasFocus()) document.title = '● Updated · Kiertotie';
+    bc.postMessage({ type: 'applied', from: TAB_ID, to: data.from, message: r.message || 'Applied' });
+  }
+});
+
+async function relay(text) {
+  if (!bc) return false;
+  relaying = true;
+  const replies = [];
+  const onHere = ({ data }) => { if (data?.type === 'here' && data.to === TAB_ID) replies.push(data); };
+  bc.addEventListener('message', onHere);
+  bc.postMessage({ type: 'hello', from: TAB_ID });
+  await sleep(350);
+  bc.removeEventListener('message', onHere);
+  if (!replies.length) { relaying = false; return false; }
+  // The board tab used most recently gets it.
+  const target = replies.sort((a, b) => b.active - a.active)[0];
+  const ack = new Promise(resolve => {
+    const onApplied = ({ data }) => {
+      if (data?.type === 'applied' && data.to === TAB_ID) { bc.removeEventListener('message', onApplied); resolve(data); }
+    };
+    bc.addEventListener('message', onApplied);
+    setTimeout(() => { bc.removeEventListener('message', onApplied); resolve(null); }, 2000);
+  });
+  bc.postMessage({ type: 'apply', from: TAB_ID, to: target.from, text });
+  const done = await ack;
+  if (!done) { relaying = false; return false; }
+  showRelayed(done.message);
+  log('link', `Sent to the open board tab: ${done.message}`);
+  // Browsers let a page close a tab that a link opened and that has no history of its own.
+  window.close();
+  return true;
+}
+
+function showRelayed(message) {
+  const el = document.createElement('div');
+  el.className = 'relay';
+  el.innerHTML = `<div class="card" role="dialog" aria-labelledby="relay-title">
+    <strong id="relay-title">Sent to your open Kiertotie tab</strong>
+    <p class="muted small">${esc(message)}</p>
+    <div class="row"><button class="primary" data-act="close">Close this tab</button><button data-act="here">Use this tab instead</button></div>
+  </div>`;
+  el.addEventListener('click', e => {
+    const act = e.target.closest('[data-act]')?.dataset.act;
+    if (act === 'close') { window.close(); toast('The browser kept this tab open: close it with Ctrl+W'); }
+    if (act === 'here') location.reload();
+  });
+  document.body.append(el);
+}
+
+// A board tab coming back into view picks up what another tab saved meanwhile.
+let lastSaved = null;
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState !== 'visible' || relaying) return;
+  const raw = stored(STORE_KEY);
+  if (!raw || raw === lastSaved) return;
+  pushUndo();
+  if (load()) { lastSaved = raw; layout(); render(); $('#source').value = toMermaid(); updateReadout(); log('board', 'Updated from another Kiertotie tab'); }
+});
 
 // ---------- WebMCP ----------
 
@@ -727,16 +815,20 @@ function copilotPacket() {
 
 function copilotSetup() {
   return `You help me draw diagrams on my Kiertotie board at ${BASE}
+You cannot change the board yourself. You answer with a link that I click, and the board applies it.
 
-When I ask for a diagram or a change:
-1. Write it as a Mermaid flowchart. Start with "flowchart LR" (or "flowchart TD"). Use short ids and put labels in brackets: web[Web app]. Shapes: [box], (rounded), ([pill]), [(database)], ((circle)), {decision}. Links: a --> b, with text a -->|HTTPS| b, dotted a -.-> b. Boundaries: subgraph azure[Azure subscription] ... end.
-2. Give me a clickable link: ${BASE}#m= followed by the Mermaid text, using ; instead of line breaks and %20 for spaces. Example:
+Keep answers short: one line saying what you changed, then the link. No other explanation unless I ask.
+
+The link is ${BASE}#m= followed by diagram text, with ; between lines, %20 for spaces and %3E for >. Example:
 ${BASE}#m=flowchart%20LR;web[Web%20app]%20--%3E%20api[API];api%20--%3E%20db[(SQL)]
-3. Also put the Mermaid in a code block so I can paste it into the board if the link does not work.
 
-For a change to the diagram I already have, send only the lines that change, without the "flowchart" line. They are merged in. Extra commands: "remove a, b", "remove a --> b", "rename a: New label", "mark a", "unmark all".
+New diagram: Mermaid flowchart text starting with "flowchart LR" (or "flowchart TD"). Short ids, labels in brackets: web[Web app]. Shapes: [box], (rounded), ([pill]), [(database)], ((circle)), {decision}. Links: a --> b, with text a -->|HTTPS| b, dotted a -.-> b. Boundaries: subgraph azure[Azure subscription] ... end.
 
-When I paste a diagram from the board, items listed in "class ... marked" are the ones I highlighted.`;
+Change to the diagram I have: only the lines that change, no "flowchart" line, and keep the ids already in use. A line with an existing id updates that item. Commands: remove a, b · remove a --> b · rename a: New label · mark a · unmark all.
+
+Items marked with "class ... marked" (or listed as highlighted) are the ones my request is about.
+
+If the link would be longer than about 1500 characters, also give the same text in a plain text code block (not a mermaid block) so I can copy it.`;
 }
 
 // ---------- interaction ----------
@@ -922,13 +1014,54 @@ document.addEventListener('keydown', e => {
   else if (!mod && e.key.toLowerCase() === 'f') fit();
 });
 
+const looksLikeDiagram = text => /-->|---|==>|-\.->|^\s*(flowchart|graph|subgraph)\b|^\s*(remove|delete|rename|mark|unmark)\s+\S/im.test(text);
+
 document.addEventListener('paste', e => {
   if (typing(e.target)) return;
   const text = e.clipboardData?.getData('text/plain') || '';
-  if (!/-->|---|==>|-\.->|^\s*(flowchart|graph|subgraph)\b|\[|\(/m.test(text)) { toast('That paste does not look like a diagram'); return; }
+  if (!looksLikeDiagram(text) && !/\[|\(/.test(text)) { toast('That paste does not look like a diagram'); return; }
   e.preventDefault();
   applyText(text, 'paste');
 });
+
+// Auto-paste: when the tab comes back into view, apply new diagram text from the clipboard.
+// Opt-in, because reading the clipboard needs the browser's permission.
+const CLIP_KEY = 'kiertotie.clip';
+let autoClip = false;
+const store = (k, v) => { try { v == null ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch { /* storage unavailable */ } };
+const stored = k => { try { return localStorage.getItem(k); } catch { return null; } };
+let lastClip = stored(`${CLIP_KEY}.last`);
+
+function rememberClip(text) { lastClip = text; store(`${CLIP_KEY}.last`, text.length < 20000 ? text : null); }
+
+async function readClip() {
+  try { return await navigator.clipboard.readText(); }
+  catch (err) { setStatus('clipboard', false, `Auto-paste: the browser blocked reading the clipboard (${err.name})`); return null; }
+}
+
+async function checkClipboard() {
+  if (!autoClip || document.visibilityState !== 'visible' || !document.hasFocus()) return;
+  const text = await readClip();
+  if (!text || text === lastClip) return;
+  rememberClip(text);
+  if (looksLikeDiagram(text)) applyText(text, 'clipboard');
+}
+
+async function setAutoClip(on) {
+  autoClip = on;
+  $('#btn-clip').setAttribute('aria-pressed', String(on));
+  store(CLIP_KEY, on ? '1' : null);
+  if (!on) { setStatus('clipboard', false, 'Auto-paste: off'); return; }
+  // What is on the clipboard when it is switched on is not new, so it is not applied.
+  const text = await readClip();
+  if (text == null) return;
+  rememberClip(text);
+  setStatus('clipboard', true, 'Auto-paste: on, applies diagram text you copy when you come back to this tab');
+}
+
+$('#btn-clip').addEventListener('click', () => setAutoClip(!autoClip).then(() => toast(autoClip ? 'Auto-paste on: copy Copilot\'s answer, then come back here' : 'Auto-paste off')));
+window.addEventListener('focus', () => setTimeout(checkClipboard, 50));
+document.addEventListener('visibilitychange', () => setTimeout(checkClipboard, 50));
 
 function setMarkMode(on) {
   markMode = on;
@@ -1009,8 +1142,10 @@ const SAMPLE = `flowchart LR
   setStatus('link', true, `Link: ${BASE}#m=… or #z=…`);
   setStatus('paste', true, 'Paste: Mermaid anywhere on the page');
   setStatus('command', true, 'Command box: ready (also a declarative WebMCP form)');
+  if (stored(CLIP_KEY)) { autoClip = true; $('#btn-clip').setAttribute('aria-pressed', 'true'); setStatus('clipboard', true, 'Auto-paste: on'); }
+  else setStatus('clipboard', false, 'Auto-paste: off (button in the toolbar)');
   if (restored) log('board', 'Restored the last diagram from this browser');
   fit();
   await registerWebMCP();
-  await readHash();
+  await readHash({ initial: true });
 })();

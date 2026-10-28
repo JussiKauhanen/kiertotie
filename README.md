@@ -16,10 +16,26 @@ The page listens on every channel at once and the **Activity** list names the ch
 | --- | --- | --- |
 | **Link** | Copilot writes `…/kiertotie/#m=flowchart LR;web[Web app] --> api[API]` and you click it. `#z=` is the compressed form **Copy link** makes for long diagrams. The diagram is in the `#` part, so it is never sent to GitHub. | Copilot can write links |
 | **Paste** | Copy Mermaid from Copilot and paste anywhere on the page. Code fences are fine. | Nothing |
+| **Auto-paste** | Turn on **Auto-paste**, copy Copilot's answer, come back to the tab: new diagram text on the clipboard is applied. Text that was already there when you turned it on, plain sentences and the board's own copies are ignored. | Edge allows clipboard reading |
 | **Command box** | **Send to diagram** on the right. Also what an agent-mode browser would type into and click. | Nothing |
 | **WebMCP (imperative)** | The page registers `get_diagram`, `set_diagram`, `update_diagram` and `remove_items` on `document.modelContext` (or the older `navigator.modelContext`). | A browser with WebMCP on **and** an assistant that calls page tools |
 | **WebMCP (declarative)** | The command box is a `<form toolname="send_diagram_text">`. | Same |
-| **Page reading** | A hidden text section, *Diagram for assistants*, describes every box, group, link and highlight in plain words, with the Mermaid after it. It helps an assistant that reads the open page, like Copilot in the Edge sidebar. | Copilot allowed to read the page |
+| **Page reading** | A hidden text section, *Diagram for assistants*, describes every box, group, link and highlight in plain words. After that come the Mermaid and the same instructions as **Copilot setup**, so the Edge sidebar Copilot learns the link format from the page itself. | Copilot allowed to read the page |
+
+## What works on a locked-down work machine
+
+Tested October 2026 with Edge and Microsoft 365 Copilot, where every other AI domain is blocked:
+
+- **Works:** Copilot in the Edge sidebar reads the board, including highlights, and its "open in Kiertotie" links apply changes when clicked.
+- **Doesn't work:** WebMCP. The flag is reset by policy, and Copilot has no interactive browser, so it can't use the command box either.
+
+So the loop is: ask the sidebar Copilot about the open board, then click the link it answers with.
+
+## Tabs
+
+Copilot's links open a new tab. If a board tab is already open, the new tab hands the change to it over a `BroadcastChannel`, then closes itself, and Edge returns to the tab you clicked from. When the board is in a background tab, its title shows "● Updated" until you look at it. If no board tab answers within about a third of a second, or the browser froze it (Edge's sleeping tabs), the new tab simply becomes the board. A board tab coming back into view also picks up whatever another board tab saved.
+
+A page can't bring an unrelated tab to the front. Named targets (`target="kiertotie"`) only reach tabs in the same browsing context group, and Copilot's links use `noopener`, so the board can't switch you to a Copilot tab. With Copilot in the Edge sidebar there is nothing to switch, which makes it the smoothest setup. Next best is Copilot and the board in two windows side by side.
 
 Text that starts with `flowchart` replaces the diagram. Anything else is merged in: new ids are added and existing ids are relabelled. Extra merge commands: `remove a, b`, `remove a --> b`, `rename a: New label`, `mark a`, `unmark all`.
 

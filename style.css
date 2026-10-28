@@ -45,6 +45,7 @@ button {
 button:hover { border-color: var(--accent); }
 button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
 button[aria-pressed="true"] { background: var(--mark); border-color: var(--mark-stroke); }
+#btn-clip[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
 textarea {
   width: 100%; resize: vertical; font: 12.5px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   color: var(--text); background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 8px;
@@ -87,6 +88,7 @@ textarea:focus, button:focus-visible, svg:focus-visible { outline: 2px solid var
 .tag { font-size: 10.5px; padding: 0 6px; border-radius: 99px; background: var(--accent-soft); color: var(--accent); }
 .tag.webmcp { background: #f3e8ff; color: #7c3aed; }
 .tag.link { background: #dcfce7; color: #15803d; }
+.tag.clipboard { background: #e0f2fe; color: #0369a1; }
 .tag.error { background: #fee2e2; color: #b91c1c; }
 
 /* diagram */
@@ -124,6 +126,8 @@ textarea:focus, button:focus-visible, svg:focus-visible { outline: 2px solid var
   padding: 8px 14px; border-radius: 8px; font-size: 13px; opacity: 0; transition: opacity .2s; pointer-events: none; max-width: calc(100% - 32px);
 }
 .toast.show { opacity: 1; }
+.relay { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; padding: 16px; background: color-mix(in srgb, var(--bg) 80%, transparent); }
+.relay .card { max-width: 380px; box-shadow: 0 10px 30px rgba(0, 0, 0, .15); }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: pre-wrap; }
 
 @media (max-width: 820px) {
