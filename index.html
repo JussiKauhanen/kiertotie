@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kiertotie</title>
+<meta name="description" content="A small diagram board that takes diagrams from any assistant: links, pasted Mermaid, a command box, or WebMCP tools.">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="bar">
+  <div class="brand"><strong>Kiertotie</strong><span class="sub">diagram board for any assistant</span></div>
+  <div class="tools" role="toolbar" aria-label="Board actions">
+    <button id="btn-mark" aria-pressed="false" title="Highlight items for the assistant (M)">Highlight</button>
+    <button id="btn-undo" title="Undo (Ctrl+Z)">Undo</button>
+    <button id="btn-tidy" title="Lay everything out again">Tidy up</button>
+    <button id="btn-fit" title="Fit to screen (F)">Fit</button>
+    <span class="sep"></span>
+    <button id="btn-link" title="Copy a link that opens this diagram">Copy link</button>
+    <button id="btn-copy" class="primary" title="Copy the diagram and your highlights to paste into Copilot">Copy for Copilot</button>
+    <button id="btn-setup" title="Copy instructions that teach Copilot this board">Copilot setup</button>
+  </div>
+</header>
+
+<main class="layout">
+  <section class="board-wrap" aria-label="Diagram board">
+    <svg id="board" tabindex="0" aria-label="Diagram canvas">
+      <defs>
+        <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" class="arrow-head"/>
+        </marker>
+        <marker id="arrow-sel" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" class="arrow-head sel"/>
+        </marker>
+      </defs>
+      <g id="viewport"></g>
+    </svg>
+    <div id="empty" class="empty">
+      <p><strong>Nothing here yet.</strong></p>
+      <p>Paste Mermaid anywhere, open a link ending in <code>#m=…</code>, type in the box on the right, or double-click to add a box.</p>
+      <button id="btn-sample">Load a sample</button>
+    </div>
+    <p class="hint">Drag to move · Shift-drag from a box to connect · Double-click to edit · Delete removes</p>
+  </section>
+
+  <aside class="panel">
+    <form id="cmd-form" class="card"
+          toolname="send_diagram_text"
+          tooldescription="Send Mermaid flowchart text to the Kiertotie board. Text starting with 'flowchart' replaces the diagram; other lines are merged into it.">
+      <label for="cmd" class="card-title">Send to diagram</label>
+      <textarea id="cmd" name="mermaid" rows="5" spellcheck="false"
+                toolparamdescription="Mermaid flowchart text, or lines to merge such as 'A --> B[New box]' or 'remove A'."
+                placeholder="flowchart LR&#10;  web[Web app] --> api[API]&#10;&#10;or just: api --> db[(Database)]"></textarea>
+      <div class="row">
+        <button type="submit" id="cmd-apply" class="primary">Apply to diagram</button>
+        <span class="muted small">Starts with <code>flowchart</code> → replaces. Otherwise → merges.</span>
+      </div>
+    </form>
+
+    <div class="card">
+      <label for="source" class="card-title">Source (Mermaid)</label>
+      <textarea id="source" rows="10" spellcheck="false" aria-describedby="source-msg"></textarea>
+      <p id="source-msg" class="muted small"></p>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Channels</div>
+      <ul id="status" class="status"></ul>
+    </div>
+
+    <div class="card grow">
+      <div class="card-title">Activity</div>
+      <ol id="log" class="log"></ol>
+    </div>
+  </aside>
+</main>
+
+<section id="readout" class="sr-only" aria-label="Diagram for assistants"></section>
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+<script src="app.js"></script>
+</body>
+</html>
