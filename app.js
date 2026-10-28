@@ -827,7 +827,7 @@ function showNote(note) {
 
 // encodeURIComponent leaves ( ) ! * ' alone; encoding them too keeps chat apps from cutting the link short.
 const encodeLink = s => encodeURIComponent(s.replace(/\n\s*/g, ';')).replace(/[()!*']/g, c => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
-const FOOTER = 'Edit on the board if you like, then press Done there and paste here (Ctrl+V) with your next request.';
+const FOOTER = 'Edit on the board if you like, type your next request next to Done, press Done, then paste here (Ctrl+V) and send.';
 const exampleLink = () => `${BASE}#note=${encodeLink('Drew the web app and its API')}&m=${encodeLink('flowchart LR\nweb[Web app] -->|HTTPS| api[API]\napi --> db[(SQL)]')}`;
 
 const RULES = () => `Every reply has exactly three parts:
@@ -846,28 +846,28 @@ The diagram is a Mermaid flowchart, and always the whole diagram, never only the
 In the link, put ; between lines and percent-encode everything else, in the note too: space %20, > %3E, | %7C, [ %5B, ] %5D, ( %28, ) %29, { %7B, } %7D, " %22, & %26, # %23. Example:
 [Open in Kiertotie](${exampleLink()})`;
 
-function starterText() {
+function starterText(request = '') {
   return `You are my diagram assistant. I draw on the Kiertotie board at ${BASE}
 You can't open the board yourself: you answer with a link that I click, and the board shows the diagram.
+Later I paste the diagram back from the board, with my highlights and my next request.
 
 ${RULES()}
 
-My first request: `;
+My first request: ${request}`;
 }
 
-function donePacket() {
+// After the starter, a paste carries only the data: the diagram, highlights and the request.
+function donePacket(request = '') {
   const marked = markedItems();
   const names = marked.map(x => `${x.id} (${(x.label || x.title).replace(/\n/g, ' ')})`);
-  return `Here is my Kiertotie diagram as it is now.${marked.length ? ` I highlighted ${names.join(', ')}: my request is about those.` : ''}
+  return `My Kiertotie diagram now${marked.length ? `, with ${names.join(', ')} highlighted` : ''}:
 
 \`\`\`mermaid
 ${toMermaid()}
 \`\`\`
 
-Reply as before. Reminder:
-${RULES()}
-
-My request: `;
+Reply in the same Kiertotie format.
+My request: ${request}`;
 }
 
 // ---------- links ----------
@@ -902,11 +902,13 @@ const openedByLink = /^#(m|note)=/.test(location.hash);
 const key = /Mac/.test(navigator.platform) ? '⌘' : 'Ctrl+';
 
 async function done() {
-  const ok = await copyText(donePacket());
+  const request = $('#ask').value.trim();
+  const ok = await copyText(donePacket(request));
   if (!ok) { toast('Copying failed: open More → Show source and copy the text by hand', 5000); return; }
+  $('#ask').value = '';
   window.close();
   // Still here: the browser does not let this tab close itself (it was not opened from a link).
-  setTimeout(() => toast(`Copied. Go to Copilot, press ${key}V and add your request.`, 5000), 250);
+  setTimeout(() => toast(`Copied. Go to Copilot, press ${key}V${request ? ' and send' : ' and add your request'}.`, 5000), 250);
 }
 
 // Other board tabs follow along: whatever one tab saves, the others load.
@@ -932,14 +934,16 @@ function updateEmpty() {
   const empty = state.nodes.size === 0 && state.groups.size === 0;
   $('#start').hidden = !empty;
   $('#btn-done').hidden = empty;
+  $('#ask').hidden = empty;
 }
 
 async function copyStarter(btn) {
-  const ok = await copyText(starterText());
+  const request = $('#first').value.trim();
+  const ok = await copyText(starterText(request));
   const label = btn.dataset.label || (btn.dataset.label = btn.textContent);
   btn.textContent = ok ? 'Copied ✓' : 'Copy failed';
   setTimeout(() => { btn.textContent = label; }, 2000);
-  if (ok) toast('Now paste it into Copilot (or Claude) and say what you want drawn.', 5000);
+  if (ok) toast(request ? `Now paste it into Copilot (or Claude) with ${key}V and send.` : 'Now paste it into Copilot (or Claude) and say what you want drawn.', 5000);
 }
 
 function closeMore() { $('#more').open = false; }
@@ -947,6 +951,8 @@ function closeMore() { $('#more').open = false; }
 $('#btn-mark').addEventListener('click', () => setMarkMode(!markMode));
 $('#btn-undo').addEventListener('click', undo);
 $('#btn-done').addEventListener('click', done);
+$('#ask').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); done(); } });
+$('#first').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); copyStarter($('#btn-starter')); } });
 $('#btn-starter').addEventListener('click', e => copyStarter(e.currentTarget));
 $('#start-sample').addEventListener('click', () => { applyText(SAMPLE, 'sample'); updateEmpty(); });
 $('#note-close').addEventListener('click', () => showNote(''));

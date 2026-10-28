@@ -23,6 +23,7 @@
         <button data-act="new" role="menuitem">Start a new diagram</button>
       </div>
     </details>
+    <input id="ask" class="ask" hidden type="text" placeholder="Next request (optional)" aria-label="Next request for Copilot (optional)" autocomplete="off">
     <button id="btn-done" class="done" hidden title="Copy the diagram for Copilot and close this tab">✓ Done – copy for Copilot</button>
   </div>
 </header>
@@ -50,8 +51,12 @@
     <div id="start" class="start" hidden>
       <h1>Draw with Copilot</h1>
       <ol>
-        <li><button id="btn-starter" class="big">Copy starter for Copilot</button></li>
-        <li>Paste it into Copilot (or Claude) and say what you want drawn.</li>
+        <li>
+          <label for="first">What should Copilot draw?</label>
+          <textarea id="first" rows="3" placeholder="e.g. how an AD group grants access to an Azure web app (optional)"></textarea>
+          <button id="btn-starter" class="big">Copy for Copilot</button>
+        </li>
+        <li>Paste it into Copilot (or Claude) and send.</li>
         <li>Click <strong>Open in Kiertotie</strong> in its answer.</li>
       </ol>
       <button id="start-sample" class="link">or look at a sample first</button>

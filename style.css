@@ -131,6 +131,11 @@ body.show-panel .panel { display: flex !important; }
 
 button.done { background: var(--add); border-color: var(--add); color: #fff; font-weight: 600; padding: 7px 14px; }
 button.done:hover { filter: brightness(1.06); }
+input.ask { font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px; width: min(300px, 40vw); }
+input.ask:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+input[hidden] { display: none; }
+.start textarea { font: 14px/1.4 var(--font); margin: 6px 0 10px; }
+.start label { font-weight: 600; display: block; }
 button.link { background: none; border: 0; color: var(--accent); text-decoration: underline; padding: 4px; }
 
 .more { position: relative; }
