@@ -15,7 +15,7 @@ const FONT = getComputedStyle(document.body).fontFamily;
 const STORE_KEY = 'kiertotie.v1';
 const BASE = location.origin + location.pathname;
 
-const state = { dir: 'LR', nodes: new Map(), groups: new Map(), edges: [], pos: new Map(), classDefs: new Map() };
+const state = { dir: 'LR', nodes: new Map(), groups: new Map(), edges: [], pos: new Map(), classDefs: new Map(), theme: null };
 let boxes = new Map();       // node id -> {x, y, w, h, shape} (centre)
 let groupBoxes = new Map();  // group id -> {x, y, w, h}
 let view = { x: 0, y: 0, k: 1 };
@@ -147,10 +147,11 @@ function textOn(fill) {
   const [r, g, b] = [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16) / 255).map(v => v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4);
   return 0.2126 * r + 0.7152 * g + 0.0722 * b > 0.4 ? '#1d2330' : '#ffffff';
 }
-function colorVars(item) {
+// accent: the board style's colour for this frame, used where the item has no colour of its own.
+function colorVars(item, accent = null) {
   const c = colorsOf(item), v = [];
-  if (c.fill) v.push(`--nf:${c.fill}`);
-  if (c.stroke) v.push(`--ns:${c.stroke}`);
+  if (c.fill) v.push(`--nf:${c.fill}`); else if (accent?.fill) v.push(`--nf:${accent.fill}`);
+  if (c.stroke) v.push(`--ns:${c.stroke}`); else if (accent?.stroke) v.push(`--ns:${accent.stroke}`);
   const t = c.color || (c.fill && textOn(c.fill));
   if (t) v.push(`--nt:${t}`);
   return v.length ? ` style="${esc(v.join(';'))}"` : '';
@@ -161,6 +162,7 @@ function colorVars(item) {
 // Undo and loading pass keep: false, since their text carries its own routes.
 function parseInto(text, { replace, keep = true }) {
   const keptRoutes = new Map(keep ? state.edges.filter(e => e.route).map(e => [`${e.from}>${e.to}`, e.route]) : []);
+  if (replace && !keep) state.theme = null;
   if (replace) { state.nodes = new Map(); state.groups = new Map(); state.edges = []; state.classDefs = new Map(); }
   const warnings = [];
   const stack = [];
@@ -195,6 +197,9 @@ function parseInto(text, { replace, keep = true }) {
       pendPos.set(m[1], m[4] ? { x: +m[2], y: +m[3], w: +m[4], h: +m[5] } : { x: +m[2], y: +m[3] });
       continue;
     }
+    if ((m = line.match(/^%%\s*@theme\s+(\w+)\s*$/))) { state.theme = BOARD_STYLES[m[1]] && m[1] !== 'classic' ? m[1] : null; continue; }
+    // Mermaid front matter (---, title: …) carries nothing the board uses.
+    if (line === '---' || /^title:\s/.test(line)) continue;
     if ((m = line.match(/^%%\s*@route\s+(\S+)\s+(\S+)\s+(curved|elbow|straight)\s*$/))) { pendRoute.set(`${m[1]}>${m[2]}`, m[3]); continue; }
     if (!line || line.startsWith('%%')) continue;
     if ((m = line.match(/^(?:flowchart|graph)\s*(LR|RL|TD|TB|BT)?\s*$/i))) { state.dir = (m[1] || 'TD').toUpperCase().replace('TB', 'TD'); continue; }
@@ -350,6 +355,7 @@ function canvasLines() {
     L.push(`%% @pos ${id} ${r(p.x)} ${r(p.y)}${p.w ? ` ${r(p.w)} ${r(p.h)}` : ''}`);
   }
   for (const e of state.edges) if (e.route) L.push(`%% @route ${e.from} ${e.to} ${e.route}`);
+  if (state.theme) L.push(`%% @theme ${state.theme}`);
   return L;
 }
 
@@ -357,7 +363,7 @@ function canvasLines() {
 
 const measure = document.createElement('canvas').getContext('2d');
 function textWidth(s, size = 14, weight = 500) {
-  measure.font = `${weight} ${size}px ${FONT}`;
+  measure.font = `${weight} ${size}px ${BOARD_STYLES[state.theme]?.font || FONT}`;
   return measure.measureText(s).width;
 }
 
@@ -577,6 +583,37 @@ function groupAt(p, skip = null, not = null) {
   return best;
 }
 
+// ---------- board styles ----------
+
+// One click recolours the board. Classic follows day and night; the others keep their own colours.
+// Saved as one canvas line (%% @theme pastel), so the Mermaid stays plain for other tools.
+const BOARD_STYLES = {
+  classic: { name: 'Classic' },
+  pastel: { name: 'Pastel', accents: ['#56b8a6', '#e3a93c', '#ea7f5f', '#7f88f5', '#de74a6'] },
+  midnight: { name: 'Midnight', accents: ['#6cc7b9', '#f6c97f', '#f2805f', '#9ea9ff', '#f7a8cf'] },
+  blueprint: { name: 'Blueprint', font: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace' },
+  sketch: { name: 'Sketch', font: '"Segoe Print", "Bradley Hand", "Chalkboard SE", "Comic Sans MS", cursive' },
+};
+// Top-level frames take the style's accents in turn; frames inside share their parent's.
+function accentOf(gid) {
+  const acc = BOARD_STYLES[state.theme]?.accents;
+  if (!acc || !gid || !state.groups.has(gid)) return null;
+  let g = state.groups.get(gid), k = 0;
+  while (g.parent && state.groups.has(g.parent) && k++ < 50) g = state.groups.get(g.parent);
+  const tops = [...state.groups.values()].filter(x => !x.parent).map(x => x.id);
+  return acc[tops.indexOf(g.id) % acc.length];
+}
+function setBoardStyle(k) {
+  pushUndo();
+  state.theme = k === 'classic' ? null : k;
+  commit('board', `${BOARD_STYLES[k].name} style`);
+  paintStyles();
+}
+function paintStyles() {
+  const cur = state.theme || 'classic';
+  $('#style-picks').innerHTML = Object.entries(BOARD_STYLES).map(([k, t]) => `<button type="button" class="style-pick" data-bstyle="${k}" aria-pressed="${k === cur}" title="${t.name}"><span class="style-sw" data-sw="${k}"></span>${t.name}</button>`).join('');
+}
+
 // ---------- rendering ----------
 
 const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -687,11 +724,13 @@ function render() {
   const vp = $('#viewport');
   vp.setAttribute('transform', `translate(${view.x},${view.y}) scale(${view.k})`);
   let html = '';
+  svg.dataset.style = state.theme || '';
   if (Icons.state === 'idle' && [...state.nodes.values()].some(n => n.shape === 'icon')) loadIcons();
   for (const gid of [...groupBoxes.keys()].sort((a, b) => groupDepth(a) - groupDepth(b))) {
     const g = state.groups.get(gid), b = groupBoxes.get(gid);
     const cls = ['group', g.marked && 'marked', sel?.type === 'group' && sel.id === gid && 'sel'].filter(Boolean).join(' ');
-    html += `<g class="${cls}" data-group="${esc(gid)}"${colorVars(g)}><rect x="${b.x - b.w / 2}" y="${b.y - b.h / 2}" width="${b.w}" height="${b.h}" rx="10"/>` +
+    const a = accentOf(gid);
+    html += `<g class="${cls}" data-group="${esc(gid)}"${colorVars(g, a && { stroke: a, fill: `color-mix(in srgb, ${a} 9%, transparent)` })}><rect x="${b.x - b.w / 2}" y="${b.y - b.h / 2}" width="${b.w}" height="${b.h}" rx="10"/>` +
       `<text x="${b.x - b.w / 2 + 12}" y="${b.y - b.h / 2 + 18}">${esc(g.title)}</text></g>`;
   }
   // Labels already placed, and the boxes, so labels can step aside from them.
@@ -720,7 +759,8 @@ function render() {
     const n = state.nodes.get(id);
     const kind = ['sticky', 'text', 'icon'].includes(n.shape) ? n.shape : '';
     const cls = ['node', kind, n.marked && 'marked', sel?.type === 'node' && sel.id === id && 'sel', flash.has(id) && `flash-${flash.get(id)}`].filter(Boolean).join(' ');
-    html += `<g class="${cls}" data-node="${esc(id)}" transform="translate(${b.x},${b.y})"${colorVars(n)}>${nodeInner(n, b)}</g>`;
+    const a = !kind && accentOf(n.group);
+    html += `<g class="${cls}" data-node="${esc(id)}" transform="translate(${b.x},${b.y})"${colorVars(n, a && { stroke: a })}>${nodeInner(n, b)}</g>`;
   }
   html += handlesSvg();
   if (drag?.kind === 'connect' && drag.to) {
@@ -754,8 +794,10 @@ function fit() {
   if (!all.length) { view = { x: W / 2, y: H / 2, k: 1 }; render(); return; }
   const x0 = Math.min(...all.map(b => b.x - b.w / 2)), x1 = Math.max(...all.map(b => b.x + b.w / 2));
   const y0 = Math.min(...all.map(b => b.y - b.h / 2)), y1 = Math.max(...all.map(b => b.y + b.h / 2));
-  const k = Math.min(1.4, (W - 80) / (x1 - x0 || 1), (H - 80) / (y1 - y0 || 1));
-  view = { k, x: W / 2 - (x0 + x1) / 2 * k, y: H / 2 - (y0 + y1) / 2 * k };
+  // Leave room for the rail on the left, the bar on top and the request box at the bottom.
+  const L = 64, R = 20, T = 64, B = 76;
+  const k = Math.min(1.4, (W - L - R) / (x1 - x0 || 1), (H - T - B) / (y1 - y0 || 1));
+  view = { k, x: L + (W - L - R) / 2 - (x0 + x1) / 2 * k, y: T + (H - T - B) / 2 - (y0 + y1) / 2 * k };
   render();
 }
 
@@ -792,7 +834,7 @@ function applyText(text, channel) {
   let src = String(text || '');
   const fence = src.match(/```(?:mermaid)?[^\n]*\n([\s\S]*?)```/);
   if (fence) src = fence[1];
-  src = src.trim();
+  src = src.trim().replace(/^---\s*[\n;][\s\S]*?[\n;]\s*---\s*[\n;]/, '').trim();
   if (!src) return { ok: false, message: 'Empty text' };
   const replace = /^(flowchart|graph)\b/i.test(src);
   const before = new Map([...state.nodes].map(([id, n]) => [id, itemFingerprint(n)]));
@@ -817,13 +859,51 @@ function applyText(text, channel) {
   return { ok: true, message, warnings, nodes: state.nodes.size, edges: state.edges.length, edgesBefore };
 }
 
+// ---------- boards ----------
+
+// Every board is saved in this browser: a list (id, name, when it changed, how big) and one entry per board.
+// The board open last is the one a new tab, or a link from the chat, lands on.
+const BOARDS_KEY = 'kiertotie.boards', CURRENT_KEY = 'kiertotie.current';
+const boardKey = id => `kiertotie.board.${id}`;
+const store = {
+  get: k => { try { return localStorage.getItem(k); } catch { return null; } },
+  set: (k, v) => { try { localStorage.setItem(k, v); } catch { /* storage unavailable */ } },
+  del: k => { try { localStorage.removeItem(k); } catch { /* storage unavailable */ } },
+};
+function boardList() { try { return JSON.parse(store.get(BOARDS_KEY)) || []; } catch { return []; } }
+function saveBoardList(list) { store.set(BOARDS_KEY, JSON.stringify(list)); }
+const newBoardId = () => `b${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
+
+let boardId = null;
+function currentBoard() { return boardList().find(b => b.id === boardId) || { id: boardId, name: 'Untitled board' }; }
+
+// The first run with boards: the single board saved before becomes the first board on the list.
+function initBoards() {
+  let list = boardList();
+  if (!list.length) {
+    const id = newBoardId(), old = store.get(STORE_KEY);
+    if (old) store.set(boardKey(id), old);
+    list = [{ id, name: 'My board', updated: Date.now() }];
+    saveBoardList(list);
+    store.del(STORE_KEY);
+  }
+  const cur = store.get(CURRENT_KEY);
+  boardId = list.some(b => b.id === cur) ? cur : [...list].sort((a, b) => b.updated - a.updated)[0].id;
+  store.set(CURRENT_KEY, boardId);
+}
+
 function save() {
   lastSaved = JSON.stringify({ src: shareText(), pos: [...state.pos] });
-  try { localStorage.setItem(STORE_KEY, lastSaved); } catch { /* storage unavailable */ }
+  store.set(boardKey(boardId), lastSaved);
+  const list = boardList(), b = list.find(x => x.id === boardId);
+  const info = { updated: Date.now(), boxes: state.nodes.size };
+  if (b) Object.assign(b, info); else list.push({ id: boardId, name: 'Untitled board', ...info });
+  saveBoardList(list);
+  paintBoardName();
 }
 function load() {
   try {
-    const raw = localStorage.getItem(STORE_KEY);
+    const raw = store.get(boardKey(boardId));
     if (!raw) return false;
     lastSaved = raw;
     const { src, pos } = JSON.parse(raw);
@@ -831,6 +911,72 @@ function load() {
     state.pos = new Map(pos || []);
     return state.nodes.size > 0;
   } catch { return false; }
+}
+
+// Open another board: this one is already saved, so only the view and the undo history start afresh.
+function openBoard(id) {
+  boardId = id;
+  store.set(CURRENT_KEY, id);
+  parseInto('flowchart LR', { replace: true, keep: false }); state.pos.clear();
+  load();
+  undoStack.length = 0; sel = null; started = false; showNote('');
+  layout(); render(); $('#source').value = toMermaid(); updateReadout(); paintBoardName();
+  fit(); updateEmpty();
+}
+function createBoard(name = 'Untitled board', text = null) {
+  const id = newBoardId();
+  saveBoardList([...boardList(), { id, name, updated: Date.now(), boxes: 0 }]);
+  openBoard(id);
+  if (text) { applyText(text, 'template'); undoStack.length = 0; }
+  return id;
+}
+function renameBoard(id, name) {
+  const list = boardList(), b = list.find(x => x.id === id);
+  if (!b || !name.trim()) return;
+  b.name = name.trim(); saveBoardList(list); paintBoardName();
+}
+function deleteBoard(id) {
+  saveBoardList(boardList().filter(b => b.id !== id));
+  store.del(boardKey(id));
+  if (id !== boardId) return;
+  const rest = boardList().sort((a, b) => b.updated - a.updated);
+  if (rest.length) openBoard(rest[0].id); else createBoard('My board');
+}
+function duplicateBoard(id) {
+  const b = boardList().find(x => x.id === id); if (!b) return;
+  const nid = newBoardId(), raw = store.get(boardKey(id));
+  if (raw) store.set(boardKey(nid), raw);
+  saveBoardList([...boardList(), { ...b, id: nid, name: `${b.name} (copy)`, updated: Date.now() }]);
+  openBoard(nid);
+}
+
+function paintBoardName() {
+  const el = $('#board-name'); if (!el) return;
+  el.textContent = currentBoard().name;
+  document.title = `${currentBoard().name} · Kiertotie`;
+}
+
+const ago = t => {
+  const s = (Date.now() - t) / 1000;
+  return s < 60 ? 'just now' : s < 3600 ? `${Math.round(s / 60)} min ago` : s < 86400 ? `${Math.round(s / 3600)} h ago` : new Date(t).toLocaleDateString();
+};
+function paintBoards() {
+  const list = boardList().sort((a, b) => b.updated - a.updated);
+  $('#boards-list').innerHTML = list.map(b => `<li class="board-row${b.id === boardId ? ' current' : ''}" data-board="${esc(b.id)}">
+    <button class="board-open" data-bact="open"><strong>${esc(b.name)}</strong><span class="muted small">${b.id === boardId ? 'Open now · ' : ''}${b.boxes != null ? `${b.boxes} boxes · ` : ''}${ago(b.updated)}</span></button>
+    <button data-bact="rename" title="Rename">Rename</button><button data-bact="copy" title="Duplicate">Duplicate</button><button data-bact="delete" title="Delete">Delete</button></li>`).join('');
+}
+function openBoards() { paintBoards(); $('#boards').showModal(); }
+
+function boardsClick(e) {
+  const b = e.target.closest('[data-bact]'); if (!b) return;
+  const id = b.closest('[data-board]').dataset.board, act = b.dataset.bact;
+  const w = pipWin || window, name = boardList().find(x => x.id === id)?.name || '';
+  if (act === 'open') { $('#boards').close(); if (id !== boardId) { openBoard(id); toast(`Opened ${name}`); } return; }
+  if (act === 'rename') { const n = w.prompt('Name this board', name); if (n) renameBoard(id, n); }
+  if (act === 'copy') duplicateBoard(id);
+  if (act === 'delete' && w.confirm(`Delete "${name}"? This can't be undone.`)) deleteBoard(id);
+  paintBoards();
 }
 
 function markedItems() {
@@ -1218,6 +1364,207 @@ function renderIconGrid() {
   for (const b of doc().querySelectorAll('#icon-tabs [data-pack]')) b.setAttribute('aria-pressed', String(!words.length && b.dataset.pack === iconPack));
 }
 
+// ---------- templates ----------
+
+// Columns of sticky notes in frames: a retrospective, a kanban board. wrap: frames per row.
+function stickyBoard(cols, { wrap = cols.length, theme = 'pastel' } = {}) {
+  const S = 160, G = 24, PADX = 24, PADT = 44, PADB = 24, per = 2, gap = 64;
+  const colW = PADX * 2 + per * S + (per - 1) * G;
+  const rows = Math.max(...cols.map(c => Math.ceil(c.notes.length / per)));
+  const colH = PADT + rows * S + (rows - 1) * G + PADB;
+  const L = ['flowchart LR'], style = [], pos = [];
+  cols.forEach((c, k) => {
+    const x0 = (k % wrap) * (colW + gap), y0 = Math.floor(k / wrap) * (colH + gap);
+    L.push(`  subgraph ${c.id}["${c.label}"]`);
+    c.notes.forEach(([text, fill], i) => {
+      const id = `${c.id}${i + 1}`;
+      L.push(`    ${id}["${text}"]:::sticky`); style.push(`  style ${id} fill:${fill}`);
+      pos.push(`%% @pos ${id} ${x0 + PADX + (i % per) * (S + G) + S / 2} ${y0 + PADT + Math.floor(i / per) * (S + G) + S / 2}`);
+    });
+    L.push('  end');
+    pos.push(`%% @pos ${c.id} ${x0 + colW / 2} ${y0 + colH / 2} ${colW} ${colH}`);
+  });
+  return [...L, ...style, ...pos, ...(theme ? [`%% @theme ${theme}`] : [])].join('\n');
+}
+function brainstorm(topic, ideas) {
+  const L = ['flowchart LR', `  topic(("${topic}"))`], pos = ['%% @pos topic 0 0'];
+  ideas.forEach(([text, fill], i) => {
+    const a = -Math.PI / 2 + i * 2 * Math.PI / ideas.length, id = `idea${i + 1}`;
+    L.push(`  ${id}["${text}"]:::sticky`, `  topic --- ${id}`, `  style ${id} fill:${fill}`);
+    pos.push(`%% @pos ${id} ${Math.round(Math.cos(a) * 340)} ${Math.round(Math.sin(a) * 260)}`);
+  });
+  return [...L, '  style topic fill:#1a1a1a,stroke:#1a1a1a,color:#ffffff', ...pos].join('\n');
+}
+
+const NOTE = { y: '#fff59d', b: '#c5d8ff', g: '#c3f0c8', p: '#fcc2d7', o: '#ffd8a8', v: '#d0bfff', r: '#ffc9c9' };
+const TEMPLATES = [
+  { cat: 'Architecture', id: 'webapp', name: 'Azure web application', desc: 'Front Door, App Service, Functions, SQL', tint: '#e3f0fb', code: `flowchart LR
+  user@{ icon: "azure:users", label: "Customers" }
+  entra@{ icon: "azure:entra-id", label: "Entra ID" }
+  fd@{ icon: "azure:front-door-and-cdn-profiles", label: "Front Door" }
+  subgraph rg["Resource group: prod"]
+    subgraph vnet["Virtual network"]
+      web@{ icon: "azure:app-services", label: "Web app" }
+      api@{ icon: "azure:function-apps", label: "Orders API" }
+      sql@{ icon: "azure:sql-database", label: "Orders DB" }
+    end
+    kv@{ icon: "azure:key-vaults", label: "Key Vault" }
+    st@{ icon: "azure:storage-accounts", label: "Blob storage" }
+    ai@{ icon: "azure:application-insights", label: "App Insights" }
+  end
+  user --> fd
+  user -.->|sign in| entra
+  fd --> web
+  web --> api
+  api --> sql
+  api --> st
+  web -.->|secrets| kv
+  api -.-> ai` },
+  { cat: 'Architecture', id: 'events', name: 'Event-driven orders', desc: 'Service Bus, Functions, Cosmos DB, Logic Apps', tint: '#e4f4ee', code: `flowchart LR
+  shop@{ icon: "azure:app-services", label: "Shop" }
+  apim@{ icon: "azure:api-management-services", label: "API gateway" }
+  sb@{ icon: "azure:azure-service-bus", label: "orders topic" }
+  subgraph workers[Processing]
+    pay@{ icon: "azure:function-apps", label: "Payment" }
+    ship@{ icon: "azure:function-apps", label: "Shipping" }
+  end
+  cosmos@{ icon: "azure:azure-cosmos-db", label: "Order store" }
+  eg@{ icon: "azure:event-grid-topics", label: "Event Grid" }
+  la@{ icon: "azure:logic-apps", label: "Notify customer" }
+  bi@{ icon: "pp:power-bi", label: "Sales dashboard" }
+  shop --> apim --> sb
+  sb --> pay
+  sb --> ship
+  pay --> cosmos
+  ship --> cosmos
+  cosmos -.->|change feed| eg
+  eg --> la
+  cosmos ==> bi` },
+  { cat: 'Architecture', id: 'pp', name: 'Power Platform solution', desc: 'Apps, Dataverse, flows, agents and reports', tint: '#f1e6f4', code: `flowchart LR
+  users@{ icon: "azure:users", label: "Employees" }
+  entra@{ icon: "azure:entra-id", label: "Entra ID" }
+  subgraph env["Power Platform environment"]
+    app@{ icon: "pp:power-apps", label: "Canvas app" }
+    portal@{ icon: "pp:power-pages", label: "Partner portal" }
+    agent@{ icon: "pp:copilot-studio", label: "Help agent" }
+    dv@{ icon: "pp:dataverse", label: "Dataverse" }
+    flow@{ icon: "pp:power-automate", label: "Cloud flows" }
+    bi@{ icon: "pp:power-bi", label: "Reports" }
+  end
+  gw@{ icon: "azure:on-premises-data-gateways", label: "Data gateway" }
+  erp[(On-prem ERP)]
+  users --> app
+  users --> agent
+  users -.->|sign in| entra
+  app --> dv
+  portal --> dv
+  agent --> dv
+  dv -->|row changed| flow
+  flow --> gw
+  gw --> erp
+  dv ==> bi` },
+  { cat: 'Architecture', id: 'inspect', name: 'Field inspections', desc: 'Power Apps, Dataverse and Azure services', tint: '#f1e6f4', code: `flowchart LR
+  inspector@{ icon: "azure:users", label: "Field inspector" }
+  subgraph pp["Power Platform"]
+    app@{ icon: "pp:power-apps", label: "Inspection app" }
+    copilot@{ icon: "pp:copilot-studio", label: "Inspection agent" }
+    dv@{ icon: "pp:dataverse", label: "Dataverse" }
+    flow@{ icon: "pp:power-automate", label: "Approval flow" }
+  end
+  subgraph az[Azure]
+    apim@{ icon: "azure:api-management-services", label: "API Management" }
+    fn@{ icon: "azure:function-apps", label: "Scoring function" }
+    sql@{ icon: "azure:sql-database", label: "Reporting DB" }
+    kv@{ icon: "azure:key-vaults", label: "Key Vault" }
+  end
+  bi@{ icon: "pp:power-bi", label: "Quality report" }
+  inspector --> app
+  inspector -.->|asks| copilot
+  app -->|saves| dv
+  copilot --> dv
+  dv -->|row added| flow
+  flow -->|custom connector| apim
+  apim --> fn
+  fn --> sql
+  fn -.-> kv
+  sql --> bi` },
+  { cat: 'Architecture', id: 'data', name: 'Analytics pipeline', desc: 'Ingest, lake, transform and report', tint: '#e3f0fb', code: `flowchart LR
+  subgraph sources[Sources]
+    iot@{ icon: "azure:event-hubs", label: "Event Hubs" }
+    crm@{ icon: "pp:dataverse", label: "Dataverse" }
+    sql@{ icon: "azure:sql-database", label: "Sales DB" }
+  end
+  adf@{ icon: "azure:data-factories", label: "Data Factory" }
+  subgraph lake["Data lake"]
+    raw@{ icon: "azure:storage-accounts", label: "Raw" }
+    curated@{ icon: "azure:storage-accounts", label: "Curated" }
+  end
+  dbx@{ icon: "azure:azure-databricks", label: "Databricks" }
+  bi@{ icon: "pp:power-bi", label: "Dashboards" }
+  iot --> adf
+  crm --> adf
+  sql --> adf
+  adf --> raw
+  raw --> dbx
+  dbx --> curated
+  curated ==> bi` },
+  { cat: 'Process', id: 'flow', name: 'Approval flowchart', desc: 'Shapes, decisions and colours', tint: '#fbf3dc', code: `flowchart TD
+  start([Expense submitted]) --> check{Over 500 EUR?}
+  check -->|No| auto[Auto-approve]
+  check -->|Yes| mgr[Manager review]
+  mgr --> ok{Approved?}
+  ok -->|Yes| pay[(Payroll)]
+  ok -->|No| reject[Notify employee]
+  auto --> pay
+  style check fill:#fff59d,stroke:#d9a900
+  style ok fill:#fff59d,stroke:#d9a900
+  style reject fill:#ffc9c9,stroke:#e03131
+  style pay fill:#c3f0c8,stroke:#2f9e44` },
+  { cat: 'Workshop', id: 'retro', name: 'Retrospective', desc: 'Went well, could be better, actions', tint: '#fdeef2', code: stickyBoard([
+    { id: 'well', label: 'What went well', notes: [['Release shipped on time', NOTE.g], ['Pairing on the API', NOTE.g], ['Fewer incidents', NOTE.g], ['Clear sprint goal', NOTE.y]] },
+    { id: 'better', label: 'What could be better', notes: [['Too many meetings', NOTE.p], ['Flaky tests in CI', NOTE.r], ['Unclear schema owner', NOTE.o], ['Late design changes', NOTE.p]] },
+    { id: 'actions', label: 'Action items', notes: [['Timebox standup to 15 min', NOTE.b], ['Fix the 3 flakiest tests', NOTE.b], ['Name a schema owner', NOTE.v]] }]) },
+  { cat: 'Workshop', id: 'kanban', name: 'Kanban board', desc: 'To do, in progress, done', tint: '#fff6cc', code: stickyBoard([
+    { id: 'todo', label: 'To do', notes: [['Write the onboarding guide', NOTE.y], ['Set up Dataverse tables', NOTE.y], ['Design the approval flow', NOTE.y], ['Collect report needs', NOTE.y]] },
+    { id: 'doing', label: 'In progress', notes: [['Build the inspection app', NOTE.b], ['Custom connector for the API', NOTE.b]] },
+    { id: 'done', label: 'Done', notes: [['Environment created', NOTE.g], ['Security roles agreed', NOTE.g], ['Kick-off meeting', NOTE.g]] }]) },
+  { cat: 'Workshop', id: 'ssc', name: 'Start, stop, continue', desc: 'Three columns of sticky notes', tint: '#eef6e2', code: stickyBoard([
+    { id: 'start', label: 'Start', notes: [['Demo to users every sprint', NOTE.g], ['Write down big decisions', NOTE.g]] },
+    { id: 'stop', label: 'Stop', notes: [['Merging without review', NOTE.r], ['Ad-hoc fixes in production', NOTE.p]] },
+    { id: 'cont', label: 'Continue', notes: [['Friday knowledge share', NOTE.b], ['Small pull requests', NOTE.b], ['Pairing on hard bugs', NOTE.y]] }]) },
+  { cat: 'Workshop', id: 'swot', name: 'SWOT analysis', desc: 'Strengths, weaknesses, opportunities, threats', tint: '#eef6e2', code: stickyBoard([
+    { id: 'str', label: 'Strengths', notes: [['Strong Azure skills', NOTE.g], ['Reusable components', NOTE.g]] },
+    { id: 'weak', label: 'Weaknesses', notes: [['Small team', NOTE.r], ['Little test automation', NOTE.r]] },
+    { id: 'opp', label: 'Opportunities', notes: [['Copilot Studio agents', NOTE.b], ['Legacy apps to move', NOTE.b]] },
+    { id: 'thr', label: 'Threats', notes: [['Licence costs', NOTE.o], ['Competing vendors', NOTE.o]] }], { wrap: 2 }) },
+  { cat: 'Workshop', id: 'brainstorm', name: 'Brainstorm', desc: 'One topic, ideas around it', tint: '#fdeef2', code: brainstorm('New hire onboarding', [
+    ['Welcome video from the team', NOTE.y], ['Buddy for the first month', NOTE.p], ['Laptop ready on day one', NOTE.b], ['Checklist app in Power Apps', NOTE.g], ['Weekly check-in with the lead', NOTE.o], ['Short quiz after week one', NOTE.v]]) },
+];
+
+function paintTemplates() {
+  let html = '', cat = '';
+  for (const t of TEMPLATES) {
+    if (t.cat !== cat) { cat = t.cat; html += `<div class="pop-label">${esc(cat)}</div>`; }
+    html += `<button type="button" class="tpl" data-tpl="${t.id}"><span class="tpl-tint" style="background:${t.tint}"></span><span><strong>${esc(t.name)}</strong><span class="muted small">${esc(t.desc)}</span></span></button>`;
+  }
+  $('#template-list').innerHTML = html;
+}
+
+// A template fills an empty board; otherwise it opens as a new board, so nothing is lost.
+function useTemplate(id) {
+  const t = TEMPLATES.find(x => x.id === id); if (!t) return;
+  closePops(); if ($('#boards').open) $('#boards').close();
+  if (!state.nodes.size && !state.groups.size) {
+    applyText(t.code, 'template');
+    if (/^(Untitled board|My board)$/.test(currentBoard().name)) renameBoard(boardId, t.name);
+    toast(`${t.name} added`);
+  } else {
+    createBoard(t.name, t.code);
+    toast(`${t.name} opened as a new board. Boards lists the others.`, 4000);
+  }
+  updateEmpty();
+}
+
 // ---------- rail popovers ----------
 
 let iconTarget = null; // a node whose icon is being swapped
@@ -1227,6 +1574,7 @@ function openPop(name, { target = null } = {}) {
   if (wasOpen && !target) return;
   pop.hidden = false;
   for (const b of doc().querySelectorAll('#rail [data-pop]')) b.setAttribute('aria-expanded', String(b.dataset.pop === name));
+  if (name === 'template') paintTemplates();
   if (name === 'icon') { iconTarget = target; loadIcons(); renderIconGrid(); $('#icon-q').focus(); }
 }
 function closePops() {
@@ -1579,7 +1927,8 @@ async function done() {
 // Other board tabs follow along: whatever one tab saves, the others load.
 let lastSaved = null;
 window.addEventListener('storage', e => {
-  if (e.key !== STORE_KEY || !e.newValue || e.newValue === lastSaved) return;
+  if (e.key === BOARDS_KEY) { paintBoardName(); if ($('#boards').open) paintBoards(); return; }
+  if (e.key !== boardKey(boardId) || !e.newValue || e.newValue === lastSaved) return;
   pushUndo();
   if (!load()) return;
   layout(); render(); $('#source').value = toMermaid(); updateReadout(); updateEmpty();
@@ -1720,7 +2069,7 @@ function exportSvg() {
   const inline = (from, to) => from.forEach((el, i) => { const cs = getComputedStyle(el); to[i].setAttribute('style', props.map(p => `${p}:${cs.getPropertyValue(p)}`).join(';')); to[i].removeAttribute('class'); });
   const hits = b.filter((_, i) => ['hit', 'port', 'handle', 'ghost'].some(c => a[i].classList?.contains(c)));
   inline(a, b); hits.forEach(el => el.remove());
-  const bg = getComputedStyle(doc().body).getPropertyValue('--bg').trim() || '#ffffff';
+  const bg = getComputedStyle($('#board')).getPropertyValue('--bg').trim() || '#ffffff';
   const defs = $('#board defs'), defsCopy = defs.cloneNode(true);
   inline([...defs.querySelectorAll('path')], [...defsCopy.querySelectorAll('path')]);
   const head = defsCopy.outerHTML;
@@ -1731,7 +2080,7 @@ function download(name, blob) {
   const a = Object.assign(doc().createElement('a'), { href: URL.createObjectURL(blob), download: name });
   doc().body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
 }
-const fileBase = () => (state.groups.size ? [...state.groups.values()][0].title : 'diagram').replace(/[^\w\u00C0-\uFFFF -]+/g, '').trim().replace(/\s+/g, '-').toLowerCase() || 'diagram';
+const fileBase = () => currentBoard().name.replace(/[^\w\u00C0-\uFFFF -]+/g, '').trim().replace(/\s+/g, '-').toLowerCase() || 'diagram';
 function downloadSvg() { const e = exportSvg(); if (!e) return toast('Nothing to export yet'); download(`${fileBase()}.svg`, new Blob([e.svg], { type: 'image/svg+xml' })); }
 function downloadPng() {
   const e = exportSvg(); if (!e) return toast('Nothing to export yet');
@@ -1808,8 +2157,17 @@ $('#icon-q').addEventListener('keydown', e => {
   if (e.key === 'Enter') { const b = $('#icon-grid [data-icon]'); if (b) pickIcon(b.dataset.icon); }
 });
 $('#ctx').addEventListener('click', ctxClick);
+$('#template-list').addEventListener('click', e => { const b = e.target.closest('[data-tpl]'); if (b) useTemplate(b.dataset.tpl); });
+$('#start-template').addEventListener('click', () => openPop('template'));
+$('#style-picks').addEventListener('click', e => { const b = e.target.closest('[data-bstyle]'); if (b) { e.stopPropagation(); setBoardStyle(b.dataset.bstyle); } });
+$('#board-name').addEventListener('click', openBoards);
+$('#more').addEventListener('toggle', () => { if ($('#more').open) paintStyles(); });
+$('#boards-list').addEventListener('click', boardsClick);
+$('#boards-new').addEventListener('click', () => { $('#boards').close(); createBoard(); toast('New board'); });
+$('#boards-template').addEventListener('click', () => { $('#boards').close(); openPop('template'); });
+$('#boards-close').addEventListener('click', () => $('#boards').close());
 $('#ctx').addEventListener('change', ctxChange);
-onDoc('pointerdown', e => { if (!e.target.closest?.('.pop, #rail')) closePops(); });
+onDoc('pointerdown', e => { if (!e.target.closest?.('.pop, #rail, #more, #start, .boards')) closePops(); });
 $('#btn-undo').addEventListener('click', undo);
 $('#btn-done').addEventListener('click', done);
 $('#ask').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); done(); } });
@@ -1828,7 +2186,7 @@ $('#btn-theme').addEventListener('click', () => setTheme(THEMES[(THEMES.indexOf(
 // Start over: delete the diagram, after asking, and go back to the start card. Undo still brings it back.
 function startOver() {
   const hasDiagram = state.nodes.size || state.groups.size;
-  if (hasDiagram && !(pipWin || window).confirm('Delete this diagram and start over?')) return;
+  if (hasDiagram && !(pipWin || window).confirm('Clear this board and start over?')) return;
   pushUndo(); parseInto('flowchart LR', { replace: true }); state.pos.clear(); showNote('');
   started = false; commit('board', 'Started over'); updateEmpty();
 }
@@ -1855,6 +2213,8 @@ $('#more').addEventListener('click', e => {
   const act = e.target.closest('[data-act]')?.dataset.act;
   if (!act) return;
   closeMore();
+  if (act === 'boards') openBoards();
+  if (act === 'templates') openPop('template');
   if (act === 'tidy') { pushUndo(); tidy(); commit('board', 'Tidied up the layout'); fit(); }
   if (act === 'fit') fit();
   if (act === 'starter') copyStarter();
@@ -1905,7 +2265,10 @@ const SAMPLE = `flowchart LR
 // ---------- start ----------
 
 (function start() {
+  initBoards();
   load();
+  paintBoardName();
+  paintStyles();
   layout();
   $('#source').value = toMermaid();
   updateReadout();

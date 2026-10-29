@@ -5,11 +5,11 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Kiertotie</title>
 <meta name="description" content="A diagram board for AI chats that can only chat: the chat answers with a link, you edit, Send passes it back.">
-<link rel="stylesheet" href="style.css?v=20261029-7">
+<link rel="stylesheet" href="style.css?v=20261029-8">
 </head>
 <body>
 <header class="bar">
-  <div class="brand"><strong>Kiertotie</strong></div>
+  <div class="brand"><strong>Kiertotie</strong><button id="board-name" class="board-name" title="Your boards"></button></div>
   <div class="tools" role="toolbar" aria-label="Board actions">
     <span id="ai-badge" class="ai-badge" title="Your assistant"></span>
     <button id="btn-float" hidden title="Float the board above all windows, so it stays in view next to your chat">⧉ Float</button>
@@ -19,6 +19,11 @@
     <details id="more" class="more">
       <summary>More</summary>
       <div class="menu" role="menu">
+        <button data-act="boards" role="menuitem">Boards…</button>
+        <button data-act="templates" role="menuitem">Templates…</button>
+        <div class="menu-label">Board style</div>
+        <div id="style-picks" class="style-picks"></div>
+        <div class="menu-label">Board</div>
         <button data-act="tidy" role="menuitem">Tidy up the layout</button>
         <button data-act="fit" role="menuitem">Fit to screen</button>
         <button data-act="share" role="menuitem">Share link and QR code…</button>
@@ -30,7 +35,7 @@
         <div class="menu-label">Assistant</div>
         <div id="ai-menu" class="ai-menu"></div>
         <button data-act="source" role="menuitem">Show source and activity</button>
-        <button data-act="new" role="menuitem">Delete and start over</button>
+        <button data-act="new" role="menuitem">Clear this board</button>
       </div>
     </details>
   </div>
@@ -67,7 +72,7 @@
       <textarea id="first" rows="3" placeholder="e.g. how an AD group grants access to an Azure web app"></textarea>
       <button id="btn-start" class="big"></button>
       <p id="start-help" class="muted small"></p>
-      <button id="start-sample" class="link">or look at a sample first</button>
+      <div class="row-links"><button id="start-sample" class="link">or look at a sample first</button><button id="start-template" class="link">start from a template</button></div>
     </div>
 
     <div id="waiting" class="start waiting" hidden>
@@ -91,6 +96,7 @@
       <button data-tool="text" title="Text (T)"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 5 V4 H16 V5 M10 4 V16 M7.5 16 H12.5"/></svg></button>
       <button data-pop="shape" aria-expanded="false" title="Shapes (R)"><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="3" width="9" height="9" rx="1.5"/><circle cx="13" cy="13" r="4.5"/></svg></button>
       <button data-tool="frame" title="Frame: a group to drop boxes into"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M6 2 V18 M14 2 V18 M2 6 H18 M2 14 H18"/></svg></button>
+      <button data-pop="template" aria-expanded="false" title="Templates"><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="3" width="6" height="6" rx="1"/><rect x="11" y="3" width="6" height="6" rx="1"/><rect x="3" y="11" width="6" height="6" rx="1"/><rect x="11" y="11" width="6" height="6" rx="1"/></svg></button>
       <button data-pop="icon" aria-expanded="false" title="Azure, Power Platform and Dynamics 365 icons (I)"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 2.5 L17 6.5 V13.5 L10 17.5 L3 13.5 V6.5 Z M3 6.5 L10 10.5 L17 6.5 M10 10.5 V17.5"/></svg></button>
     </nav>
     <div id="shape-pop" class="pop shape-pop" hidden role="menu" aria-label="Shapes">
@@ -106,6 +112,10 @@
       <input id="icon-q" type="search" placeholder="Search icons, e.g. key vault" autocomplete="off" aria-label="Search icons">
       <div id="icon-tabs" class="icon-tabs"><button data-pack="azure">Azure</button><button data-pack="pp">Power Platform</button><button data-pack="d365">Dynamics 365</button></div>
       <div id="icon-grid" class="icon-grid"></div>
+    </div>
+    <div id="template-pop" class="pop template-pop" hidden aria-label="Templates">
+      <p class="muted small">An empty board takes the template; otherwise it opens as a new board.</p>
+      <div id="template-list" class="template-list"></div>
     </div>
     <div id="ctx" class="ctx" hidden role="toolbar" aria-label="Selection"></div>
 
@@ -138,6 +148,14 @@
   <p><strong>Sent to your floating board.</strong> You can close this tab.</p>
 </div>
 
+<dialog id="boards" class="share boards">
+  <h2>Your boards</h2>
+  <p class="muted small">Saved in this browser only. Share a link to move a board to another computer.</p>
+  <div class="row"><button id="boards-new" class="primary">New board</button><button id="boards-template">From a template…</button></div>
+  <ul id="boards-list" class="boards-list"></ul>
+  <div class="row end"><button id="boards-close">Close</button></div>
+</dialog>
+
 <dialog id="share" class="share">
   <h2>Share this diagram</h2>
   <p class="muted small">The whole diagram is inside the link, compressed. Nothing is uploaded: whoever opens it sees the board as it is now.</p>
@@ -152,6 +170,6 @@
 
 <!-- Bump ?v= on every release, so a page never pairs with a cached older script (GitHub Pages caches for 10 minutes). -->
 <script src="vendor/qrcode.js?v=1"></script>
-<script src="app.js?v=20261029-7"></script>
+<script src="app.js?v=20261029-8"></script>
 </body>
 </html>

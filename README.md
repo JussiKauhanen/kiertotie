@@ -50,6 +50,12 @@ A selected box has four dots: drag one onto another box to link them, or onto em
 
 In Mermaid, icons are `kv@{ icon: "azure:key-vaults", label: "Secrets" }`, text is `t1@{ shape: text, label: "…" }` and sticky notes are `n1["…"]:::sticky`. The assistant's instructions teach it all three. When an assistant gets an icon name slightly wrong, the board picks the closest match, for example `azure:key-vault` finds `azure:key-vaults`. Positions, sizes and line routes are saved as `%% @pos` and `%% @route` lines, which Mermaid ignores.
 
+## Boards, templates and styles
+
+- **Boards:** click the board name next to Kiertotie, or **More → Boards…**, to see every board saved in this browser. From there you can make a new board, open, rename, duplicate or delete one. A new tab, and a link from the chat, open on the board you used last. Boards live in this browser only; a share link moves one to another computer.
+- **Templates:** the rail's grid button, **More → Templates…** or the start card. There are five architecture templates (Azure web app, event-driven orders, Power Platform, field inspections, analytics), an approval flowchart, and five workshop boards: retrospective, kanban, start/stop/continue, SWOT and brainstorm. An empty board takes the template; otherwise it opens as a new board.
+- **Board styles:** **More → Board style:** Classic, Pastel, Midnight, Blueprint and Sketch. Classic follows day and night; the others keep their own canvas colours. Pastel and Midnight give each top-level frame its own colour. The style is saved per board as `%% @theme <name>`.
+
 ## Share and export
 
 **More** has these:
