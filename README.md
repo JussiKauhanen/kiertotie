@@ -15,6 +15,15 @@ https://jussikauhanen.github.io/kiertotie/
 
 Later pastes carry only the data plus one line, "Reply in the same Kiertotie format", which keeps a long chat on track.
 
+## Floating board (Chrome and Edge)
+
+Press **⧉ Float** and the board moves into a small window that stays on top of every other window (Document Picture-in-Picture), so it stays in view while you work in the Copilot tab:
+
+1. Copilot's **Open in Kiertotie** link opens a tab that hands the diagram to the floating board and closes itself. The browser returns you to Copilot, and the floating board shows the change.
+2. Edit or highlight in the floating board, type the next request, and press **⧉ Copy for Copilot**. Then press Ctrl+V in Copilot. There's no tab to close.
+
+Keep the Kiertotie tab open (in the background is fine), because closing it closes the floating board. **Bring it back here** in that tab, or closing the floating window, puts the board back in the tab. If no floating board is open, links behave as in the loop above.
+
 **With Copilot in the Edge sidebar** you can skip steps 5 and 6. The sidebar reads the open board directly, through a hidden text description that includes the highlights and the reply rules.
 
 ## Details

@@ -4,7 +4,13 @@
 // the link opens the board, the user edits, Done copies the diagram and closes the tab,
 // and the user pastes it back into the chat. A text readout serves the Edge sidebar Copilot.
 
-const $ = s => document.querySelector(s);
+// While the board floats (Document Picture-in-Picture), its elements live in the floating window's document.
+let pipWin = null;
+const doc = () => pipWin ? pipWin.document : document;
+const $ = s => doc().querySelector(s) || document.querySelector(s);
+// Document-level listeners, attached to this page and again to the floating window when it opens.
+const docListeners = [];
+function onDoc(type, fn) { docListeners.push([type, fn]); document.addEventListener(type, fn); }
 const FONT = getComputedStyle(document.body).fontFamily;
 const STORE_KEY = 'kiertotie.v1';
 const BASE = location.origin + location.pathname;
@@ -460,22 +466,32 @@ function render() {
     html += `<g class="${cls}" data-group="${esc(gid)}"><rect x="${b.x - b.w / 2}" y="${b.y - b.h / 2}" width="${b.w}" height="${b.h}" rx="10"/>` +
       `<text x="${b.x - b.w / 2 + 12}" y="${b.y - b.h / 2 + 18}">${esc(g.title)}</text></g>`;
   }
+  // Labels already placed, and the boxes, so labels can step aside from them.
+  const taken = [...boxes.values()].map(b => ({ x0: b.x - b.w / 2, x1: b.x + b.w / 2, y0: b.y - b.h / 2, y1: b.y + b.h / 2 }));
+  const hits = r => taken.some(t => r.x0 < t.x1 && r.x1 > t.x0 && r.y0 < t.y1 && r.y1 > t.y0);
   state.edges.forEach((e, i) => {
     const a = anchorBox(e.from), b = anchorBox(e.to);
     if (!a || !b) return;
-    let off = 0;
-    if (state.edges.some(o => o.from === e.to && o.to === e.from)) off = 9;
-    const len = Math.hypot(b.x - a.x, b.y - a.y) || 1, nx = -(b.y - a.y) / len * off, ny = (b.x - a.x) / len * off;
-    const p1 = clip(a, b.x + nx, b.y + ny), p2 = clip(b, a.x + nx, a.y + ny);
-    const s = { x: p1.x + nx, y: p1.y + ny }, t = { x: p2.x + nx, y: p2.y + ny };
+    // A link that also runs the other way bends to its own side, so the pair doesn't overlap.
+    const len = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+    const nx = -(b.y - a.y) / len, ny = (b.x - a.x) / len;
+    const bulge = state.edges.some(o => o.from === e.to && o.to === e.from) ? 34 : 0;
+    const c = { x: (a.x + b.x) / 2 + nx * bulge, y: (a.y + b.y) / 2 + ny * bulge };
+    const s = clip(a, c.x, c.y), t = clip(b, c.x, c.y);
+    const at = u => ({ x: (1 - u) ** 2 * s.x + 2 * (1 - u) * u * c.x + u * u * t.x, y: (1 - u) ** 2 * s.y + 2 * (1 - u) * u * c.y + u * u * t.y });
     const isSel = sel?.type === 'edge' && sel.i === i;
-    const d = `M${s.x},${s.y} L${t.x},${t.y}`;
+    const d = bulge ? `M${s.x},${s.y} Q${c.x},${c.y} ${t.x},${t.y}` : `M${s.x},${s.y} L${t.x},${t.y}`;
     const marker = e.arrow ? ` marker-end="url(#${isSel ? 'arrow-sel' : 'arrow'})"` : '';
     let label = '';
     if (e.label) {
-      const mx = (s.x + t.x) / 2, my = (s.y + t.y) / 2, lw = textWidth(e.label.replace(/\n/g, ' '), 12, 400) + 10;
-      label = `<rect class="label-bg" x="${mx - lw / 2}" y="${my - 10}" width="${lw}" height="20" rx="4"/>` +
-        `<text x="${mx}" y="${my}" text-anchor="middle" dominant-baseline="central">${esc(e.label.replace(/\n/g, ' '))}</text>`;
+      const text = e.label.replace(/\n/g, ' ');
+      const lw = textWidth(text, 12, 400) + 10, lh = 20;
+      const rectAt = p => ({ x0: p.x - lw / 2, x1: p.x + lw / 2, y0: p.y - lh / 2, y1: p.y + lh / 2 });
+      let p = at(0.5);
+      for (const u of [0.5, 0.38, 0.62, 0.28, 0.72, 0.2, 0.8]) { const q = at(u); if (!hits(rectAt(q))) { p = q; break; } }
+      taken.push(rectAt(p));
+      label = `<rect class="label-bg" x="${p.x - lw / 2}" y="${p.y - lh / 2}" width="${lw}" height="${lh}" rx="4"/>` +
+        `<text x="${p.x}" y="${p.y}" text-anchor="middle" dominant-baseline="central">${esc(text)}</text>`;
     }
     html += `<g class="edge ${e.style}${isSel ? ' sel' : ''}" data-edge="${i}"><path class="hit" d="${d}"/><path class="line" d="${d}"${marker}/>${label}</g>`;
   });
@@ -678,7 +694,7 @@ svg.addEventListener('pointerup', e => {
   drag = null;
   if (!d) return;
   if (d.kind === 'connect') {
-    const target = document.elementFromPoint(e.clientX, e.clientY)?.closest('[data-node],[data-group]');
+    const target = doc().elementFromPoint(e.clientX, e.clientY)?.closest('[data-node],[data-group]');
     const to = target?.dataset.node || target?.dataset.group;
     if (to && to !== d.from) {
       pushUndo();
@@ -771,8 +787,8 @@ function deleteSelection() {
 
 const typing = el => el && (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT' || el.isContentEditable);
 
-document.addEventListener('keydown', e => {
-  if (typing(document.activeElement)) return;
+onDoc('keydown', e => {
+  if (typing(doc().activeElement)) return;
   const mod = e.metaKey || e.ctrlKey;
   if (mod && e.key.toLowerCase() === 'z') { e.preventDefault(); undo(); }
   else if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); deleteSelection(); }
@@ -783,7 +799,7 @@ document.addEventListener('keydown', e => {
 
 const looksLikeDiagram = text => /-->|---|==>|-\.->|^\s*(flowchart|graph|subgraph)\b|^\s*(remove|delete|rename|mark|unmark)\s+\S/im.test(text);
 
-document.addEventListener('paste', e => {
+onDoc('paste', e => {
   if (typing(e.target)) return;
   const text = e.clipboardData?.getData('text/plain') || '';
   if (!looksLikeDiagram(text) && !/\[|\(/.test(text)) { toast('That paste does not look like a diagram'); return; }
@@ -808,12 +824,14 @@ function toast(msg, ms = 2600) {
   clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), ms);
 }
 
+// The click happened in whichever window shows the board, so that window does the copying.
 async function copyText(text) {
-  try { await navigator.clipboard.writeText(text); return true; }
+  const w = pipWin || window;
+  try { await w.navigator.clipboard.writeText(text); return true; }
   catch {
-    const ta = Object.assign(document.createElement('textarea'), { value: text });
-    document.body.append(ta); ta.select();
-    const ok = document.execCommand('copy'); ta.remove();
+    const d = w.document, ta = Object.assign(d.createElement('textarea'), { value: text });
+    d.body.append(ta); ta.select();
+    const ok = d.execCommand('copy'); ta.remove();
     return ok;
   }
 }
@@ -885,10 +903,11 @@ function parseHash(h) {
   return { note: note.trim(), text: decode(m) };
 }
 
-function readHash() {
+async function readHash() {
   const link = parseHash(location.hash.slice(1));
   if (!link) return;
   history.replaceState(null, '', BASE);
+  if (!pipWin && await handOff(link)) return;
   applyText(link.text, 'link');
   showNote(link.note);
   updateEmpty();
@@ -906,6 +925,7 @@ async function done() {
   const ok = await copyText(donePacket(request));
   if (!ok) { toast('Copying failed: open More → Show source and copy the text by hand', 5000); return; }
   $('#ask').value = '';
+  if (pipWin) { toast(`Copied. Press ${key}V in Copilot${request ? ' and send' : ' and add your request'}.`, 4000); return; }
   window.close();
   // Still here: the browser does not let this tab close itself (it was not opened from a link).
   setTimeout(() => toast(`Copied. Go to Copilot, press ${key}V${request ? ' and send' : ' and add your request'}.`, 5000), 250);
@@ -920,6 +940,87 @@ window.addEventListener('storage', e => {
   layout(); render(); $('#source').value = toMermaid(); updateReadout(); updateEmpty();
   log('board', 'Updated from another Kiertotie tab');
 });
+
+// ---------- floating board ----------
+
+// The board floats above every window (Document Picture-in-Picture, Chrome and Edge), so it stays
+// in view while you work in the Copilot tab. This tab has to stay open: closing it closes the float.
+const canFloat = 'documentPictureInPicture' in window;
+
+async function floatBoard() {
+  if (pipWin) { pipWin.focus(); return; }
+  if (!canFloat) { toast('This browser cannot float a window. Chrome and Edge can.', 4000); return; }
+  let w;
+  try { w = await documentPictureInPicture.requestWindow({ width: 560, height: 640 }); }
+  catch (err) { toast(`The browser did not open the floating window (${err.name}).`, 4000); return; }
+  for (const sheet of document.styleSheets) {
+    try {
+      const st = w.document.createElement('style');
+      st.textContent = [...sheet.cssRules].map(r => r.cssText).join('\n');
+      w.document.head.append(st);
+    } catch {
+      const l = Object.assign(w.document.createElement('link'), { rel: 'stylesheet', href: sheet.href });
+      w.document.head.append(l);
+    }
+  }
+  w.document.title = 'Kiertotie';
+  w.document.body.className = document.body.className;
+  w.document.body.classList.add('floating');
+  // The readout stays here, for the Edge sidebar Copilot reading this tab.
+  for (const el of [...document.body.children]) if (el.tagName !== 'SCRIPT' && !['readout', 'docked', 'handed'].includes(el.id)) w.document.body.append(el);
+  pipWin = w;
+  document.getElementById('docked').hidden = false;
+  for (const [type, fn] of docListeners) w.document.addEventListener(type, fn);
+  w.addEventListener('resize', () => render());
+  w.addEventListener('pagehide', dockBoard, { once: true });
+  updateFloatUI(); render(); fit();
+  log('board', 'Board is floating');
+}
+
+function dockBoard() {
+  const w = pipWin; if (!w) return;
+  const anchor = document.getElementById('docked');
+  for (const el of [...w.document.body.children]) document.body.insertBefore(el, anchor);
+  pipWin = null;
+  anchor.hidden = true;
+  updateFloatUI(); render(); fit();
+}
+
+function updateFloatUI() {
+  $('#btn-float').hidden = !canFloat || !!pipWin;
+  if (pipWin) $('#btn-done').textContent = '⧉ Copy for Copilot';
+  else $('#btn-done').textContent = openedByLink ? '✓ Done – back to Copilot' : '✓ Done – copy for Copilot';
+}
+
+// A link tab hands its diagram to a floating board, if one is open, and closes itself;
+// the browser then returns to the Copilot tab the link was clicked in.
+const bc = 'BroadcastChannel' in window ? new BroadcastChannel('kiertotie') : null;
+if (bc) bc.addEventListener('message', ({ data }) => {
+  if (!data || !pipWin) return;
+  if (data.type === 'floating?') bc.postMessage({ type: 'floating', to: data.from });
+  if (data.type === 'apply') {
+    applyText(data.text, 'link'); showNote(data.note || ''); updateEmpty();
+    bc.postMessage({ type: 'applied', to: data.from });
+  }
+});
+
+async function handOff(link) {
+  if (!bc) return false;
+  const me = Math.random().toString(36).slice(2);
+  const reply = type => new Promise(resolve => {
+    const on = ({ data }) => { if (data && data.type === type && data.to === me) { bc.removeEventListener('message', on); resolve(true); } };
+    bc.addEventListener('message', on);
+    setTimeout(() => { bc.removeEventListener('message', on); resolve(false); }, 400);
+  });
+  const found = reply('floating'); bc.postMessage({ type: 'floating?', from: me });
+  if (!await found) return false;
+  const applied = reply('applied'); bc.postMessage({ type: 'apply', from: me, text: link.text, note: link.note });
+  if (!await applied) return false;
+  window.close();
+  // Still here: the browser keeps this tab open, so say where the diagram went.
+  $('#handed').hidden = false;
+  return true;
+}
 
 // ---------- controls ----------
 
@@ -965,11 +1066,11 @@ $('#more').addEventListener('click', e => {
   if (act === 'starter') copyStarter($('#btn-starter'));
   if (act === 'source') { document.body.classList.toggle('show-panel'); render(); }
   if (act === 'new') {
-    if (!confirm('Start a new diagram? You can undo this.')) return;
+    if (!(pipWin || window).confirm('Start a new diagram? You can undo this.')) return;
     pushUndo(); parseInto('flowchart LR', { replace: true }); state.pos.clear(); showNote(''); commit('board', 'Started over'); updateEmpty();
   }
 });
-document.addEventListener('click', e => { if (!e.target.closest('#more')) closeMore(); });
+onDoc('click', e => { if (!e.target.closest('#more')) closeMore(); });
 
 let sourceTimer;
 $('#source').addEventListener('input', () => {
@@ -984,9 +1085,11 @@ $('#source').addEventListener('input', () => {
 });
 
 // Pasting a diagram anywhere also works, for when a link comes out broken.
-document.addEventListener('paste', () => setTimeout(updateEmpty, 0));
+onDoc('paste', () => setTimeout(updateEmpty, 0));
 window.addEventListener('hashchange', readHash);
 window.addEventListener('resize', () => render());
+$('#btn-float').addEventListener('click', floatBoard);
+$('#docked-back').addEventListener('click', () => pipWin && pipWin.close());
 
 const SAMPLE = `flowchart LR
   user([Consultant])
@@ -1011,8 +1114,8 @@ const SAMPLE = `flowchart LR
   layout();
   $('#source').value = toMermaid();
   updateReadout();
-  if (openedByLink) $('#btn-done').textContent = '✓ Done – back to Copilot';
+  updateFloatUI();
   fit();
-  readHash();
   updateEmpty();
+  readHash();
 })();

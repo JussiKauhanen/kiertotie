@@ -127,6 +127,10 @@ body.show-panel .panel { display: flex !important; }
   padding: 8px 14px; border-radius: 8px; font-size: 13px; opacity: 0; transition: opacity .2s; pointer-events: none; max-width: calc(100% - 32px);
 }
 .toast.show { opacity: 1; }
+.docked { position: fixed; inset: 0; z-index: 40; display: grid; place-content: center; gap: 12px; text-align: center; padding: 16px; background: var(--bg); }
+.docked[hidden] { display: none; }
+body.floating .hint, body.floating .brand { display: none; }
+body.floating .bar { padding: 6px 10px; }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: pre-wrap; }
 
 button.done { background: var(--add); border-color: var(--add); color: #fff; font-weight: 600; padding: 7px 14px; }

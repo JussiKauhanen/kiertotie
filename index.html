@@ -11,6 +11,7 @@
 <header class="bar">
   <div class="brand"><strong>Kiertotie</strong></div>
   <div class="tools" role="toolbar" aria-label="Board actions">
+    <button id="btn-float" hidden title="Float the board above all windows, so it stays in view next to Copilot">⧉ Float</button>
     <button id="btn-mark" aria-pressed="false" title="Mark boxes your next request is about (M)">Highlight</button>
     <button id="btn-undo" title="Undo (Ctrl+Z)">Undo</button>
     <details id="more" class="more">
@@ -77,6 +78,14 @@
     </div>
   </aside>
 </main>
+
+<div id="docked" class="docked" hidden>
+  <p><strong>The board is floating.</strong> Keep this tab open: closing it closes the floating board too.</p>
+  <button id="docked-back">Bring it back here</button>
+</div>
+<div id="handed" class="docked" hidden>
+  <p><strong>Sent to your floating board.</strong> You can close this tab.</p>
+</div>
 
 <section id="readout" class="sr-only" aria-label="Diagram for assistants"></section>
 <div id="toast" class="toast" role="status" aria-live="polite"></div>
