@@ -48,3 +48,7 @@ Keep the Kiertotie tab open (in the background is fine), because closing it clos
 - `index.html`: toolbar, start screen, banner and the hidden panel
 - `style.css`: light and dark themes
 - `app.js`: Mermaid flowchart subset parser and writer, layered layout with group bands, SVG board and editing, the link and Done loop, and the starter text
+
+## Releasing
+
+`index.html` loads `style.css?v=…` and `app.js?v=…`. Bump both version strings whenever either file changes. GitHub Pages lets browsers cache files for 10 minutes, and without the bump a new tab can pair the new page with an old script: links then stop working until the cache expires.

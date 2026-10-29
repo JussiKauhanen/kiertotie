@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Kiertotie</title>
 <meta name="description" content="A diagram board for AI chats that can only chat: the chat answers with a link, you edit, Send passes it back.">
-<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="style.css?v=20261029-3">
 </head>
 <body>
 <header class="bar">
@@ -112,6 +112,7 @@
 <section id="readout" class="sr-only" aria-label="Diagram for assistants"></section>
 <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
-<script src="app.js"></script>
+<!-- Bump ?v= on every release, so a page never pairs with a cached older script (GitHub Pages caches for 10 minutes). -->
+<script src="app.js?v=20261029-3"></script>
 </body>
 </html>
