@@ -48,7 +48,36 @@ Select something to get its toolbar:
 
 A selected box has four dots: drag one onto another box to link them, or onto empty board for a new linked box. The corner square resizes boxes and frames, and the text wraps to fit.
 
-In Mermaid, icons are `kv@{ icon: "azure:key-vaults", label: "Secrets" }`, text is `t1@{ shape: text, label: "…" }` and sticky notes are `n1["…"]:::sticky`. The assistant's instructions teach it all three. When an assistant gets an icon name slightly wrong, the board picks the closest match, for example `azure:key-vault` finds `azure:key-vaults`. Positions, sizes and line routes are saved as `%% @pos` and `%% @route` lines, which Mermaid ignores.
+In Mermaid, icons are `kv@{ icon: "azure:key-vaults", label: "Secrets" }`, text is `t1@{ shape: text, label: "…" }` and sticky notes are `n1["…"]:::sticky`. The assistant's instructions teach it all three. When an assistant gets an icon name slightly wrong, the board picks the closest match, for example `azure:key-vault` finds `azure:key-vaults`. Positions, sizes, line routes, zones, tables, docs, images, ink and comments are saved as `%% @…` canvas lines, which Mermaid ignores.
+
+## Editing
+
+- **Select:** drag on empty board, or inside a frame, to select everything the rectangle touches. Shift-click adds or removes items, and Ctrl+A selects all. A frame is picked up by its title bar.
+- **Pan:** two fingers on a trackpad, the scroll wheel, Space-drag or the middle mouse button.
+- **Several items:** move, colour, align (left, centre, right, top, middle, bottom), space evenly, put in a frame, or delete them together.
+- **Keys:** Ctrl+C / X / V copy, cut and paste, also between boards. Ctrl+D duplicates. Arrow keys nudge (Shift for 10). Ctrl+Z undoes and Ctrl+Shift+Z or Ctrl+Y redoes. V select, N note, T text, R shape, P pen, C comment, I icons, M highlight, F fit.
+- A copied selection also lands on the clipboard as Mermaid, so you can paste part of a board into the chat.
+- **Snap to grid** and the **Minimap** are on by default; switch them off in More. Alt-drag moves freely.
+
+## Architecture
+
+- **Zones:** frames for kinds of boundary: Internet, On-premises, Management group, Azure subscription, Resource group, Virtual network, Subnet, Perimeter / DMZ, Power Platform environment and External system. Each has its own colour, line style and title icon. A frame whose title names a kind, such as "Resource group: prod" or "VNet", becomes that zone by itself. A selected frame's toolbar sets the kind by hand.
+- **Line types:** a selected line's toolbar has HTTPS, sign-in / token, private link, VPN / ExpressRoute, event, two-way sync and SQL. Each sets the style, colour and label. Lines can also take one of seven colours; they're saved as Mermaid `linkStyle` lines.
+- **Flow steps:** **More → Number the steps** puts ① ② ③ on the line labels in flow order, or only on the selected line. **Add a step legend** makes a table of the steps next to the diagram and updates it when run again.
+
+## More kinds of content
+
+- **Shapes** now include a table, a doc (a card with a title and longer text), a phone screen and a browser window. Double-click a table to edit it as lines of cells split by `|`. Double-click a doc to edit its title line and text.
+- **Images:** paste a picture or drop one on the board. It's shrunk to at most 1200 pixels and kept with the board. Share links leave images out, since they would make the link too long.
+- **Pen, highlighter, arrow and eraser** are under the pencil on the rail. Ink can be selected, moved, recoloured and deleted like anything else.
+- **Comments:** a numbered pin with text that shows on hover. Comments, doc text and tables travel to the chat in the Send packet, below the diagram. Exports leave comments out.
+
+## Files
+
+- **Download for draw.io:** a `.drawio` file. Frames become containers, boxes keep their shapes and colours, icons and images come along, and lines keep their routes. Pen drawings and comments stay on the board.
+- **Download this board (.mmd):** Mermaid with a title line, plus the canvas lines that keep the layout.
+- **Save all boards to a folder…:** one `.mmd` per board, in a folder you pick (Chrome and Edge).
+- **Open files…**, or drop files on the board: `.mmd`, `.mermaid`, `.md` and `.txt` files open as new boards, and pictures go onto the current one.
 
 ## Boards, templates and styles
 

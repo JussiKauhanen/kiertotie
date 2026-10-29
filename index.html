@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Kiertotie</title>
 <meta name="description" content="A diagram board for AI chats that can only chat: the chat answers with a link, you edit, Send passes it back.">
-<link rel="stylesheet" href="style.css?v=20261029-8">
+<link rel="stylesheet" href="style.css?v=20261029-9">
 </head>
 <body>
 <header class="bar">
@@ -15,6 +15,7 @@
     <button id="btn-float" hidden title="Float the board above all windows, so it stays in view next to your chat">⧉ Float</button>
     <button id="btn-mark" aria-pressed="false" title="Mark boxes your next request is about (M)">Highlight</button>
     <button id="btn-undo" title="Undo (Ctrl+Z)">Undo</button>
+    <button id="btn-redo" class="icon-only" title="Redo (Ctrl+Shift+Z)" aria-label="Redo">↷</button>
     <button id="btn-theme" title="Theme"></button>
     <details id="more" class="more">
       <summary>More</summary>
@@ -26,10 +27,21 @@
         <div class="menu-label">Board</div>
         <button data-act="tidy" role="menuitem">Tidy up the layout</button>
         <button data-act="fit" role="menuitem">Fit to screen</button>
+        <button data-act="snap" role="menuitemcheckbox" id="menu-snap">Snap to grid</button>
+        <button data-act="minimap" role="menuitemcheckbox" id="menu-minimap">Minimap</button>
+        <div class="menu-label">Flow steps</div>
+        <button data-act="steps" role="menuitem">Number the steps</button>
+        <button data-act="legend" role="menuitem">Add a step legend</button>
+        <button data-act="nosteps" role="menuitem">Remove step numbers</button>
+        <div class="menu-label">Share and files</div>
         <button data-act="share" role="menuitem">Share link and QR code…</button>
         <button data-act="png" role="menuitem">Download PNG</button>
         <button data-act="svg" role="menuitem">Download SVG</button>
         <button data-act="mermaid" role="menuitem">Copy as Mermaid</button>
+        <button data-act="drawio" role="menuitem">Download for draw.io</button>
+        <button data-act="mmd" role="menuitem">Download this board (.mmd)</button>
+        <button data-act="folder" role="menuitem">Save all boards to a folder…</button>
+        <button data-act="open" role="menuitem">Open files…</button>
         <div class="menu-label">Chat</div>
         <button data-act="starter" role="menuitem" id="menu-starter">Copy the instructions again</button>
         <div class="menu-label">Assistant</div>
@@ -95,6 +107,8 @@
       <button data-tool="sticky" title="Sticky note (N)"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 4 H16 V12 L12 16 H4 Z M16 12 H12 V16"/></svg></button>
       <button data-tool="text" title="Text (T)"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 5 V4 H16 V5 M10 4 V16 M7.5 16 H12.5"/></svg></button>
       <button data-pop="shape" aria-expanded="false" title="Shapes (R)"><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="3" width="9" height="9" rx="1.5"/><circle cx="13" cy="13" r="4.5"/></svg></button>
+      <button data-pop="draw" aria-expanded="false" title="Pen, highlighter, arrow and eraser (P)"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 16 L5 12 L13.5 3.5 L16.5 6.5 L8 15 Z M11.5 5.5 L14.5 8.5"/></svg></button>
+      <button data-tool="comment" title="Comment (C)"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 4 H16 V13 H9 L5 16.5 V13 H4 Z"/></svg></button>
       <button data-tool="frame" title="Frame: a group to drop boxes into"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M6 2 V18 M14 2 V18 M2 6 H18 M2 14 H18"/></svg></button>
       <button data-pop="template" aria-expanded="false" title="Templates"><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="3" width="6" height="6" rx="1"/><rect x="11" y="3" width="6" height="6" rx="1"/><rect x="3" y="11" width="6" height="6" rx="1"/><rect x="11" y="11" width="6" height="6" rx="1"/></svg></button>
       <button data-pop="icon" aria-expanded="false" title="Azure, Power Platform and Dynamics 365 icons (I)"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 2.5 L17 6.5 V13.5 L10 17.5 L3 13.5 V6.5 Z M3 6.5 L10 10.5 L17 6.5 M10 10.5 V17.5"/></svg></button>
@@ -107,19 +121,31 @@
       <button data-shape="diamond" title="Decision"><svg viewBox="0 0 28 20"><path d="M14 1.5 L25 10 L14 18.5 L3 10 Z"/></svg></button>
       <button data-shape="cylinder" title="Database"><svg viewBox="0 0 28 20"><path d="M7 4.5 C7 2, 21 2, 21 4.5 V15.5 C21 18, 7 18, 7 15.5 Z M7 4.5 C7 7, 21 7, 21 4.5"/></svg></button>
       <button data-shape="hexagon" title="Hexagon"><svg viewBox="0 0 28 20"><path d="M7 3 H21 L26 10 L21 17 H7 L2 10 Z"/></svg></button>
+      <button data-shape="table" title="Table"><svg viewBox="0 0 28 20"><rect x="3" y="3" width="22" height="14" rx="1.5"/><path d="M3 8 H25 M3 12.5 H25 M11 3 V17 M18 3 V17"/></svg></button>
+      <button data-shape="doc" title="Doc: a card with longer text"><svg viewBox="0 0 28 20"><path d="M7 2 H18 L22 6 V18 H7 Z M10 8 H18 M10 11 H19 M10 14 H16"/></svg></button>
+      <button data-shape="phone" title="Phone screen"><svg viewBox="0 0 28 20"><rect x="9" y="1" width="10" height="18" rx="2.5"/><path d="M12.5 3.5 H15.5"/></svg></button>
+      <button data-shape="browser" title="Browser window"><svg viewBox="0 0 28 20"><rect x="2" y="3" width="24" height="14" rx="2"/><path d="M2 7 H26"/></svg></button>
     </div>
     <div id="icon-pop" class="pop icon-pop" hidden aria-label="Icons">
       <input id="icon-q" type="search" placeholder="Search icons, e.g. key vault" autocomplete="off" aria-label="Search icons">
       <div id="icon-tabs" class="icon-tabs"><button data-pack="azure">Azure</button><button data-pack="pp">Power Platform</button><button data-pack="d365">Dynamics 365</button></div>
       <div id="icon-grid" class="icon-grid"></div>
     </div>
+    <div id="draw-pop" class="pop draw-pop" hidden aria-label="Draw">
+      <div class="draw-tools">
+        <button data-tool="pen" title="Pen (P)">Pen</button><button data-tool="hl" title="Highlighter">Highlighter</button>
+        <button data-tool="arrow" title="Arrow: drag from where to where">Arrow</button><button data-tool="eraser" title="Eraser: drag over ink to remove it">Eraser</button>
+      </div>
+      <div id="draw-colors" class="draw-colors"></div>
+    </div>
+    <svg id="minimap" class="minimap" viewBox="0 0 168 110" hidden aria-label="Minimap"></svg>
     <div id="template-pop" class="pop template-pop" hidden aria-label="Templates">
       <p class="muted small">An empty board takes the template; otherwise it opens as a new board.</p>
       <div id="template-list" class="template-list"></div>
     </div>
     <div id="ctx" class="ctx" hidden role="toolbar" aria-label="Selection"></div>
 
-    <p class="hint">Drag to move · drag a dot to connect · Double-click to edit · Delete removes</p>
+    <p class="hint">Drag to select · Space-drag or two fingers to pan · drag a dot to connect · Double-click to edit</p>
   </section>
 
   <aside class="panel">
@@ -170,6 +196,6 @@
 
 <!-- Bump ?v= on every release, so a page never pairs with a cached older script (GitHub Pages caches for 10 minutes). -->
 <script src="vendor/qrcode.js?v=1"></script>
-<script src="app.js?v=20261029-8"></script>
+<script src="app.js?v=20261029-9"></script>
 </body>
 </html>
