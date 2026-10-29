@@ -228,3 +228,55 @@ button.big { background: var(--accent); border-color: var(--accent); color: #fff
   .sep { display: none; }
   .hint { display: none; }
 }
+
+/* ---------- Miro-like look: a dotted canvas with floating islands ---------- */
+:root {
+  --bg: #f2f3f5; --surface: #ffffff; --border: #e2e4e9; --text: #1a1a1a; --muted: #6b7280;
+  --accent: #4262ff; --accent-soft: #e9edff; --node: #ffffff; --node-stroke: #1a1a1a; --edge: #1a1a1a;
+  --group: rgba(255, 255, 255, .6); --group-stroke: #c3c7d0; --dot: #cdd1d8;
+  --shadow: 0 2px 8px rgba(16, 24, 40, .08), 0 0 0 1px rgba(16, 24, 40, .06);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #1b1d22; --surface: #26292f; --border: #353941; --text: #eceef2; --muted: #9aa0ab;
+    --accent: #6c87ff; --accent-soft: #2a3150; --node: #2b2f36; --node-stroke: #c9ced8; --edge: #c9ced8;
+    --group: rgba(255, 255, 255, .03); --group-stroke: #454a54; --dot: #30343c;
+    --shadow: 0 2px 10px rgba(0, 0, 0, .4), 0 0 0 1px rgba(255, 255, 255, .06);
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #1b1d22; --surface: #26292f; --border: #353941; --text: #eceef2; --muted: #9aa0ab;
+  --accent: #6c87ff; --accent-soft: #2a3150; --node: #2b2f36; --node-stroke: #c9ced8; --edge: #c9ced8;
+  --group: rgba(255, 255, 255, .03); --group-stroke: #454a54; --dot: #30343c;
+  --shadow: 0 2px 10px rgba(0, 0, 0, .4), 0 0 0 1px rgba(255, 255, 255, .06);
+}
+body { position: relative; }
+.bar { position: absolute; top: 10px; left: 10px; right: 10px; z-index: 20; background: none; border: 0; padding: 0; pointer-events: none; gap: 10px; flex-wrap: nowrap; }
+.bar > * { pointer-events: auto; }
+.brand { background: var(--surface); border-radius: 10px; box-shadow: var(--shadow); padding: 9px 14px; }
+.tools { background: var(--surface); border-radius: 10px; box-shadow: var(--shadow); padding: 4px; gap: 2px; flex-wrap: nowrap; align-items: center; }
+.tools > button, .tools .more summary { border-color: transparent; background: none; }
+.tools > button:hover, .tools .more summary:hover { background: var(--accent-soft); border-color: transparent; }
+.tools > button.primary { background: var(--accent); color: #fff; }
+.ai-badge { padding: 0 8px; }
+.note { position: absolute; top: 62px; left: 50%; transform: translateX(-50%); z-index: 15; width: max-content; max-width: calc(100% - 20px); border: 0; border-radius: 10px; box-shadow: var(--shadow); background: var(--surface); }
+.composer { position: absolute; bottom: 12px; left: 50%; transform: translateX(-50%); width: min(720px, calc(100% - 20px)); z-index: 15; border: 0; border-radius: 12px; box-shadow: var(--shadow); padding: 8px; }
+.composer input { border-color: transparent; background: var(--bg); }
+body:has(.composer:not([hidden])) .hint { display: none; }
+.toast { bottom: 84px; }
+.start { border: 0; box-shadow: var(--shadow); border-radius: 16px; }
+.node-shape { stroke-width: 1.6; filter: drop-shadow(0 1px 1.5px rgba(16, 24, 40, .12)); }
+.edge path.line { stroke-width: 1.5; }
+.group rect { stroke-dasharray: 6 4; }
+body.floating .bar { top: 6px; left: 6px; right: 6px; }
+body.floating .note { top: 52px; }
+body.floating .composer { bottom: 6px; width: calc(100% - 12px); }
+.row.end { justify-content: flex-end; }
+
+/* share dialog */
+.share { border: 0; border-radius: 16px; box-shadow: var(--shadow); background: var(--surface); color: var(--text); padding: 22px; width: min(460px, calc(100% - 24px)); }
+.share::backdrop { background: rgba(0, 0, 0, .35); }
+.share h2 { margin: 0 0 6px; font-size: 18px; }
+.share-row { display: flex; gap: 8px; margin: 12px 0 4px; }
+.share-row input { flex: 1; min-width: 0; font: 12.5px ui-monospace, Menlo, monospace; color: var(--text); background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 8px; }
+.share-qr svg { width: 220px; height: 220px; display: block; margin: 8px auto 12px; border-radius: 8px; }

@@ -35,6 +35,21 @@ Keep the Kiertotie tab open (in the background is fine), because closing it clos
 - The diagram is kept in the browser. Open board tabs update each other live.
 - **More** holds Tidy up, Fit, Copy starter, Show source and activity (the Mermaid editor and a log of changes), and Start a new diagram.
 
+## Share and export
+
+**More** has these:
+- **Share link and QR code:** a compressed `#z=` link that carries the whole diagram, including colours and boxes moved by hand, plus a QR code when the link is short enough. Nothing is uploaded.
+- **Download PNG** (at 2×) and **Download SVG:** the board with its current day or night colours written into the file.
+- **Copy as Mermaid:** the plain Mermaid source.
+
+Assistants keep writing plain `#m=` links, because they can't compress reliably. The board reads both kinds.
+
+The QR code uses [qrcode-generator](https://github.com/kazuhikoarase/qrcode-generator) by Kazuhiko Arase (MIT), in `vendor/qrcode.js`.
+
+## Floating window size
+
+The browser remembers where you last put the floating board. **Reset its size and place** in the Kiertotie tab reopens it at the default size and position.
+
 ## Limits we found (October 2026)
 
 - **WebMCP:** no use here. It's a draft API behind a flag, Edge resets the flag by policy on the work machine, and no assistant calls page tools yet.

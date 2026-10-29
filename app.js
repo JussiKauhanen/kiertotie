@@ -142,6 +142,7 @@ function parseInto(text, { replace }) {
   const stack = [];
   const fresh = new Set();
   const lines = text.split(/\n|;/);
+  const pendPos = new Map();
 
   const touch = spec => {
     let n = state.nodes.get(spec.id);
@@ -160,8 +161,9 @@ function parseInto(text, { replace }) {
 
   for (const raw of lines) {
     const line = raw.trim();
-    if (!line || line.startsWith('%%')) continue;
     let m;
+    if ((m = line.match(/^%%\s*@pos\s+(\S+)\s+(-?[\d.]+)\s+(-?[\d.]+)\s*$/))) { pendPos.set(m[1], { x: +m[2], y: +m[3] }); continue; }
+    if (!line || line.startsWith('%%')) continue;
     if ((m = line.match(/^(?:flowchart|graph)\s*(LR|RL|TD|TB|BT)?\s*$/i))) { state.dir = (m[1] || 'TD').toUpperCase().replace('TB', 'TD'); continue; }
     if ((m = line.match(/^classDef\s+([\w-]+)\s+(.+)$/))) { if (m[1] !== 'marked') state.classDefs.set(m[1], styleProps(m[2])); continue; }
     if ((m = line.match(/^style\s+([\w\u00C0-\uFFFF-]+)\s+(.+)$/))) {
@@ -238,6 +240,7 @@ function parseInto(text, { replace }) {
     }
   }
   if (stack.length) warnings.push('A subgraph is missing its "end"');
+  for (const [id, p] of pendPos) state.pos.set(id, p);
 
   // An implicit node with a group's id is a link to that group, not a box.
   for (const [id, n] of state.nodes) if (n.implicit && state.groups.has(id)) state.nodes.delete(id);
@@ -1043,6 +1046,7 @@ function parseHash(h) {
     if (at < 0) return null;
     note = decode(h.slice(5, at)); m = h.slice(at + 3);
   } else if (h.startsWith('m=')) m = h.slice(2);
+  else if (h.startsWith('z=')) return { note: '', z: h.slice(2) };
   else return null;
   return { note: note.trim(), text: decode(m) };
 }
@@ -1051,6 +1055,10 @@ async function readHash() {
   const link = parseHash(location.hash.slice(1));
   if (!link) return;
   history.replaceState(null, '', BASE);
+  if (link.z) {
+    try { link.text = await unzipText(link.z); }
+    catch { showNote('', ['The shared link is damaged']); return; }
+  }
   if (!pipWin && await handOff(link)) return;
   const r = applyText(link.text, 'link');
   showNote(link.note, r.warnings || []);
@@ -1061,7 +1069,7 @@ async function readHash() {
 
 // A tab opened from the assistant's link: Done closes it and the browser returns to the chat.
 // Browsers let a page close a tab that a link opened, but not bring another tab to the front.
-const openedByLink = /^#(m|note)=/.test(location.hash);
+const openedByLink = /^#(m|note|z)=/.test(location.hash);
 const key = /Mac/.test(navigator.platform) ? '⌘' : 'Ctrl+';
 
 async function done() {
@@ -1092,11 +1100,12 @@ window.addEventListener('storage', e => {
 // in view while you work in the Copilot tab. This tab has to stay open: closing it closes the float.
 const canFloat = 'documentPictureInPicture' in window;
 
-async function floatBoard() {
-  if (pipWin) { pipWin.focus(); return; }
+async function floatBoard(opts = {}) {
+  if (pipWin && !opts.reset) { pipWin.focus(); return; }
   if (!canFloat) { toast('This browser cannot float a window. Chrome and Edge can.', 4000); return; }
   let w;
-  try { w = await documentPictureInPicture.requestWindow({ width: 560, height: 640 }); }
+  // reset: the default size and place, instead of where the float was last.
+  try { w = await documentPictureInPicture.requestWindow({ width: 560, height: 640, preferInitialWindowPlacement: !!opts.reset }); }
   catch (err) { toast(`The browser did not open the floating window (${err.name}).`, 4000); return; }
   for (const sheet of document.styleSheets) {
     try {
@@ -1170,6 +1179,78 @@ async function handOff(link) {
   return true;
 }
 
+// ---------- share and export ----------
+
+// Links the board makes itself are compressed (#z=); assistants keep writing plain #m= links.
+const b64url = bytes => { let s = ''; for (const b of bytes) s += String.fromCharCode(b); return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''); };
+const unb64url = s => Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/')), c => c.charCodeAt(0));
+async function zipText(text) {
+  const stream = new Blob([text]).stream().pipeThrough(new CompressionStream('deflate-raw'));
+  return b64url(new Uint8Array(await new Response(stream).arrayBuffer()));
+}
+async function unzipText(z) {
+  const stream = new Blob([unb64url(z)]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
+  return new Response(stream).text();
+}
+// What a shared link carries: the diagram plus where boxes were moved by hand.
+const shareText = () => [toMermaid(), ...[...state.pos].filter(([id]) => state.nodes.has(id)).map(([id, p]) => `%% @pos ${id} ${Math.round(p.x)} ${Math.round(p.y)}`)].join('\n');
+async function shareLink() { return `${BASE}#z=${await zipText(shareText())}`; }
+
+const QR_MAX = 2300;
+function qrSvg(text) {
+  const q = qrcode(0, 'L'); q.addData(text, 'Byte'); q.make();
+  const n = q.getModuleCount(), m = 4, size = n + m * 2; let d = '';
+  for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) if (q.isDark(r, c)) d += `M${c + m} ${r + m}h1v1h-1z`;
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${size} ${size}" shape-rendering="crispEdges" role="img" aria-label="QR code for this diagram"><rect width="${size}" height="${size}" fill="#fff"/><path d="${d}" fill="#000"/></svg>`;
+}
+
+async function openShare() {
+  const url = await shareLink();
+  $('#share-url').value = url;
+  $('#share-size').textContent = `${url.length.toLocaleString()} characters`;
+  const fits = typeof qrcode === 'function' && url.length <= QR_MAX;
+  $('#share-qr').innerHTML = fits ? qrSvg(url) : `<p class="muted small">${typeof qrcode === 'function' ? 'This diagram is too big for a QR code. Share the link instead.' : 'The QR code library did not load.'}</p>`;
+  $('#share').showModal();
+}
+
+// Exports render the board with its colours written out, so they look the same outside this page.
+function exportSvg() {
+  const all = [...boxes.values(), ...groupBoxes.values()];
+  if (!all.length) return null;
+  const pad = 32;
+  const x0 = Math.min(...all.map(b => b.x - b.w / 2)) - pad, x1 = Math.max(...all.map(b => b.x + b.w / 2)) + pad;
+  const y0 = Math.min(...all.map(b => b.y - b.h / 2)) - pad, y1 = Math.max(...all.map(b => b.y + b.h / 2)) + pad;
+  const src = $('#viewport'), copy = src.cloneNode(true);
+  copy.removeAttribute('transform');
+  const props = ['fill', 'stroke', 'stroke-width', 'stroke-dasharray', 'font-family', 'font-size', 'font-weight', 'opacity'];
+  const a = [src, ...src.querySelectorAll('*')], b = [copy, ...copy.querySelectorAll('*')];
+  const inline = (from, to) => from.forEach((el, i) => { const cs = getComputedStyle(el); to[i].setAttribute('style', props.map(p => `${p}:${cs.getPropertyValue(p)}`).join(';')); to[i].removeAttribute('class'); });
+  const hits = b.filter((_, i) => a[i].classList?.contains('hit'));
+  inline(a, b); hits.forEach(el => el.remove());
+  const bg = getComputedStyle(doc().body).getPropertyValue('--bg').trim() || '#ffffff';
+  const defs = $('#board defs'), defsCopy = defs.cloneNode(true);
+  inline([...defs.querySelectorAll('path')], [...defsCopy.querySelectorAll('path')]);
+  const head = defsCopy.outerHTML;
+  const w = x1 - x0, h = y1 - y0;
+  return { w, h, svg: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${x0} ${y0} ${w} ${h}" width="${w}" height="${h}">${head}<rect x="${x0}" y="${y0}" width="${w}" height="${h}" fill="${bg}"/>${copy.outerHTML}</svg>` };
+}
+function download(name, blob) {
+  const a = Object.assign(doc().createElement('a'), { href: URL.createObjectURL(blob), download: name });
+  doc().body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+}
+const fileBase = () => (state.groups.size ? [...state.groups.values()][0].title : 'diagram').replace(/[^\w\u00C0-\uFFFF -]+/g, '').trim().replace(/\s+/g, '-').toLowerCase() || 'diagram';
+function downloadSvg() { const e = exportSvg(); if (!e) return toast('Nothing to export yet'); download(`${fileBase()}.svg`, new Blob([e.svg], { type: 'image/svg+xml' })); }
+function downloadPng() {
+  const e = exportSvg(); if (!e) return toast('Nothing to export yet');
+  const img = new Image(), scale = 2;
+  img.onload = () => {
+    const c = Object.assign(document.createElement('canvas'), { width: e.w * scale, height: e.h * scale });
+    c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+    c.toBlob(blob => download(`${fileBase()}.png`, blob), 'image/png');
+  };
+  img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(e.svg);
+}
+
 // ---------- controls ----------
 
 function setMarkMode(on) {
@@ -1215,6 +1296,12 @@ $('#first').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shift
 $('#btn-start').addEventListener('click', startLoop);
 $('#wait-copy').addEventListener('click', copyStarter);
 $('#wait-back').addEventListener('click', startOver);
+$('#share-copy').addEventListener('click', () => copyText($('#share-url').value).then(ok => { $('#share-copy').textContent = ok ? 'Copied ✓' : 'Copy failed'; setTimeout(() => { $('#share-copy').textContent = 'Copy link'; }, 1500); }));
+$('#share-close').addEventListener('click', () => $('#share').close());
+$('#docked-reset').addEventListener('click', async () => {
+  if (pipWin) { pipWin.close(); for (let i = 0; i < 20 && pipWin; i++) await new Promise(r => setTimeout(r, 25)); }
+  floatBoard({ reset: true });
+});
 $('#btn-theme').addEventListener('click', () => setTheme(THEMES[(THEMES.indexOf(theme) + 1) % THEMES.length]));
 
 // Start over: delete the diagram, after asking, and go back to the start card. Undo still brings it back.
@@ -1250,6 +1337,10 @@ $('#more').addEventListener('click', e => {
   if (act === 'tidy') { pushUndo(); state.pos.clear(); commit('board', 'Tidied up the layout'); fit(); }
   if (act === 'fit') fit();
   if (act === 'starter') copyStarter();
+  if (act === 'share') openShare();
+  if (act === 'png') downloadPng();
+  if (act === 'svg') downloadSvg();
+  if (act === 'mermaid') copyText(toMermaid()).then(ok => toast(ok ? 'Mermaid copied' : 'Copying failed'));
   if (act === 'source') { document.body.classList.toggle('show-panel'); render(); }
   if (act === 'new') startOver();
 });
@@ -1271,7 +1362,7 @@ $('#source').addEventListener('input', () => {
 onDoc('paste', () => setTimeout(updateEmpty, 0));
 window.addEventListener('hashchange', readHash);
 window.addEventListener('resize', () => render());
-$('#btn-float').addEventListener('click', floatBoard);
+$('#btn-float').addEventListener('click', () => floatBoard());
 $('#docked-back').addEventListener('click', () => pipWin && pipWin.close());
 
 const SAMPLE = `flowchart LR

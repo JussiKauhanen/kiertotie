@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Kiertotie</title>
 <meta name="description" content="A diagram board for AI chats that can only chat: the chat answers with a link, you edit, Send passes it back.">
-<link rel="stylesheet" href="style.css?v=20261029-3">
+<link rel="stylesheet" href="style.css?v=20261029-4">
 </head>
 <body>
 <header class="bar">
@@ -21,6 +21,11 @@
       <div class="menu" role="menu">
         <button data-act="tidy" role="menuitem">Tidy up the layout</button>
         <button data-act="fit" role="menuitem">Fit to screen</button>
+        <button data-act="share" role="menuitem">Share link and QR code…</button>
+        <button data-act="png" role="menuitem">Download PNG</button>
+        <button data-act="svg" role="menuitem">Download SVG</button>
+        <button data-act="mermaid" role="menuitem">Copy as Mermaid</button>
+        <div class="menu-label">Chat</div>
         <button data-act="starter" role="menuitem" id="menu-starter">Copy the instructions again</button>
         <div class="menu-label">Assistant</div>
         <div id="ai-menu" class="ai-menu"></div>
@@ -103,16 +108,26 @@
 
 <div id="docked" class="docked" hidden>
   <p><strong>The board is floating.</strong> Keep this tab open: closing it closes the floating board too.</p>
-  <button id="docked-back">Bring it back here</button>
+  <div class="row"><button id="docked-back">Bring it back here</button><button id="docked-reset">Reset its size and place</button></div>
 </div>
 <div id="handed" class="docked" hidden>
   <p><strong>Sent to your floating board.</strong> You can close this tab.</p>
 </div>
 
+<dialog id="share" class="share">
+  <h2>Share this diagram</h2>
+  <p class="muted small">The whole diagram is inside the link, compressed. Nothing is uploaded: whoever opens it sees the board as it is now.</p>
+  <div class="share-row"><input id="share-url" readonly aria-label="Link to this diagram"><button id="share-copy" class="primary">Copy link</button></div>
+  <p id="share-size" class="muted small"></p>
+  <div id="share-qr" class="share-qr"></div>
+  <div class="row end"><button id="share-close">Close</button></div>
+</dialog>
+
 <section id="readout" class="sr-only" aria-label="Diagram for assistants"></section>
 <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
 <!-- Bump ?v= on every release, so a page never pairs with a cached older script (GitHub Pages caches for 10 minutes). -->
-<script src="app.js?v=20261029-3"></script>
+<script src="vendor/qrcode.js?v=1"></script>
+<script src="app.js?v=20261029-5"></script>
 </body>
 </html>
