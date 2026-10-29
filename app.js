@@ -974,6 +974,8 @@ async function floatBoard() {
   w.addEventListener('resize', () => render());
   w.addEventListener('pagehide', dockBoard, { once: true });
   updateFloatUI(); render(); fit();
+  // The floating window gets its final size a moment after it opens: fit again once it has.
+  w.requestAnimationFrame(() => fit()); setTimeout(fit, 150); setTimeout(fit, 500);
   log('board', 'Board is floating');
 }
 
@@ -983,7 +985,7 @@ function dockBoard() {
   for (const el of [...w.document.body.children]) document.body.insertBefore(el, anchor);
   pipWin = null;
   anchor.hidden = true;
-  updateFloatUI(); render(); fit();
+  updateFloatUI(); render(); fit(); setTimeout(fit, 150);
 }
 
 function updateFloatUI() {
