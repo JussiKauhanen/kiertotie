@@ -93,8 +93,10 @@ body.show-panel .panel { display: flex !important; }
 .tag.error { background: #fee2e2; color: #b91c1c; }
 
 /* diagram */
-.node-shape { fill: var(--node); stroke: var(--node-stroke); stroke-width: 1.4; }
+.node-shape { fill: var(--nf, var(--node)); stroke: var(--ns, var(--node-stroke)); stroke-width: 1.4; }
 .node text, .group text, .edge text { fill: var(--text); font: 500 14px var(--font); }
+.node text { fill: var(--nt, var(--text)); }
+.node.marked text { fill: var(--text); }
 .node { cursor: grab; }
 .node.sel .node-shape { stroke: var(--accent); stroke-width: 2.4; }
 .node.marked .node-shape { fill: var(--mark); stroke: var(--mark-stroke); stroke-width: 2.4; }
@@ -102,7 +104,7 @@ body.show-panel .panel { display: flex !important; }
 .node.flash-change .node-shape { animation: flash-change 1.6s ease-out; }
 @keyframes flash-add { 0%, 30% { stroke: var(--add); stroke-width: 4; } }
 @keyframes flash-change { 0%, 30% { stroke: var(--change); stroke-width: 4; } }
-.group rect { fill: var(--group); stroke: var(--group-stroke); stroke-width: 1.2; stroke-dasharray: 5 4; }
+.group rect { fill: var(--nf, var(--group)); stroke: var(--ns, var(--group-stroke)); stroke-width: 1.2; stroke-dasharray: 5 4; }
 .group text { font-weight: 600; font-size: 12.5px; fill: var(--muted); }
 .group { cursor: grab; }
 .group.sel rect { stroke: var(--accent); stroke-dasharray: none; stroke-width: 2; }
@@ -131,11 +133,36 @@ body.show-panel .panel { display: flex !important; }
 .docked[hidden] { display: none; }
 body.floating .hint, body.floating .brand { display: none; }
 body.floating .bar { padding: 6px 10px; }
+/* assistant */
+.ai-badge { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--muted); margin-right: 4px; }
+.ai-dot { display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 6px; color: #fff; font: 700 11px var(--font); flex: none; }
+.ai-pick { border: 0; padding: 0; margin: 0 0 12px; }
+.ai-pick legend, .start label { font-weight: 600; margin-bottom: 6px; display: block; }
+.ai-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.ai-chip { display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; border-radius: 99px; }
+.ai-chip[aria-checked="true"] { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
+.ai-menu { display: flex; flex-direction: column; gap: 2px; }
+.ai-menu button { display: flex; align-items: center; gap: 8px; }
+.ai-menu button[aria-checked="true"] { color: var(--accent); font-weight: 600; }
+.menu-label { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); padding: 8px 10px 2px; border-top: 1px solid var(--border); margin-top: 4px; }
+.start #btn-start { width: 100%; margin-top: 4px; }
+.start #start-help { margin: 8px 0 6px; }
+
+/* composer: the next request, at the bottom of the board */
+.composer { display: flex; gap: 8px; padding: 10px 12px; background: var(--surface); border-top: 1px solid var(--border); }
+.composer[hidden] { display: none; }
+.composer input { flex: 1; min-width: 0; font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--border); border-radius: 10px; padding: 9px 12px; }
+.composer input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.note-warn { color: #b45309; font-weight: 600; }
+.btn-inline { padding: 2px 10px; margin: 0 2px; background: var(--accent); border-color: var(--accent); color: #fff; }
+body.floating .tools { flex-wrap: nowrap; }
+body.floating .ai-badge { display: none; }
+
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: pre-wrap; }
 
 button.done { background: var(--add); border-color: var(--add); color: #fff; font-weight: 600; padding: 7px 14px; }
 button.done:hover { filter: brightness(1.06); }
-input.ask { font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px; width: min(300px, 40vw); }
+input.ask-old { font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px; width: min(300px, 40vw); }
 input.ask:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
 input[hidden] { display: none; }
 .start textarea { font: 14px/1.4 var(--font); margin: 6px 0 10px; }

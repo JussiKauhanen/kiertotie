@@ -15,7 +15,7 @@ const FONT = getComputedStyle(document.body).fontFamily;
 const STORE_KEY = 'kiertotie.v1';
 const BASE = location.origin + location.pathname;
 
-const state = { dir: 'LR', nodes: new Map(), groups: new Map(), edges: [], pos: new Map() };
+const state = { dir: 'LR', nodes: new Map(), groups: new Map(), edges: [], pos: new Map(), classDefs: new Map() };
 let boxes = new Map();       // node id -> {x, y, w, h, shape} (centre)
 let groupBoxes = new Map();  // group id -> {x, y, w, h}
 let view = { x: 0, y: 0, k: 1 };
@@ -105,9 +105,39 @@ const edgeStyle = tok => tok.includes('.') ? 'dotted' : tok.includes('=') ? 'thi
 const slug = s => s.trim().replace(/[^\wÀ-￿]+/g, '_').replace(/^_|_$/g, '') || 'group';
 const splitIds = s => s.split(/[\s,]+/).map(x => x.trim()).filter(Boolean);
 
+// Colours: the fill, stroke and text colour parts of Mermaid's style and classDef lines.
+const COLOR_RE = /^(#[0-9a-f]{3,8}|[a-z]+|rgba?\([^)]*\))$/i;
+function styleProps(text) {
+  const st = {};
+  for (const part of text.replace(/;$/, '').split(',')) {
+    const [k, v] = part.split(':').map(x => x && x.trim());
+    if (['fill', 'stroke', 'color'].includes(k) && v && COLOR_RE.test(v)) st[k] = v;
+  }
+  return st;
+}
+const propsText = st => Object.entries(st).map(([k, v]) => `${k}:${v}`).join(',');
+function colorsOf(item) { return { ...(item.cls && state.classDefs.get(item.cls)), ...item.style }; }
+
+// Dark or light text, whichever reads better on the fill.
+function textOn(fill) {
+  const c = document.createElement('canvas').getContext('2d');
+  c.fillStyle = '#000'; c.fillStyle = fill; const hex = c.fillStyle;
+  if (!/^#[0-9a-f]{6}$/i.test(hex)) return null;
+  const [r, g, b] = [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16) / 255).map(v => v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4);
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b > 0.4 ? '#1d2330' : '#ffffff';
+}
+function colorVars(item) {
+  const c = colorsOf(item), v = [];
+  if (c.fill) v.push(`--nf:${c.fill}`);
+  if (c.stroke) v.push(`--ns:${c.stroke}`);
+  const t = c.color || (c.fill && textOn(c.fill));
+  if (t) v.push(`--nt:${t}`);
+  return v.length ? ` style="${esc(v.join(';'))}"` : '';
+}
+
 // Parses text into the current state. replace: start from an empty diagram (manual positions are kept).
 function parseInto(text, { replace }) {
-  if (replace) { state.nodes = new Map(); state.groups = new Map(); state.edges = []; }
+  if (replace) { state.nodes = new Map(); state.groups = new Map(); state.edges = []; state.classDefs = new Map(); }
   const warnings = [];
   const stack = [];
   const fresh = new Set();
@@ -120,6 +150,7 @@ function parseInto(text, { replace }) {
     const g = stack[stack.length - 1] || null;
     if (g && (fresh.has(spec.id) || spec.shape || !n.group)) n.group = g;
     if (spec.cls === 'marked') n.marked = true;
+    else if (spec.cls) n.cls = spec.cls;
   };
   const addEdge = (from, to, label, style, arrow) => {
     const e = state.edges.find(x => x.from === from && x.to === to);
@@ -132,7 +163,13 @@ function parseInto(text, { replace }) {
     if (!line || line.startsWith('%%')) continue;
     let m;
     if ((m = line.match(/^(?:flowchart|graph)\s*(LR|RL|TD|TB|BT)?\s*$/i))) { state.dir = (m[1] || 'TD').toUpperCase().replace('TB', 'TD'); continue; }
-    if (/^(classDef|style|linkStyle|click|direction)\b/.test(line)) continue;
+    if ((m = line.match(/^classDef\s+([\w-]+)\s+(.+)$/))) { if (m[1] !== 'marked') state.classDefs.set(m[1], styleProps(m[2])); continue; }
+    if ((m = line.match(/^style\s+([\w\u00C0-\uFFFF-]+)\s+(.+)$/))) {
+      const item = state.nodes.get(m[1]) || state.groups.get(m[1]);
+      if (item) item.style = { ...item.style, ...styleProps(m[2]) };
+      continue;
+    }
+    if (/^(linkStyle|click|direction)\b/.test(line)) continue;
     if (line === 'end') { if (!stack.pop()) warnings.push('"end" without a subgraph'); continue; }
     if (/^clear$/i.test(line)) { state.nodes.clear(); state.groups.clear(); state.edges = []; continue; }
     if ((m = line.match(/^subgraph\s+(.+)$/))) {
@@ -152,7 +189,8 @@ function parseInto(text, { replace }) {
     if ((m = line.match(/^class\s+(.+?)\s+([\w-]+)$/))) {
       for (const id of splitIds(m[1])) {
         const item = state.nodes.get(id) || state.groups.get(id);
-        if (item) item.marked = m[2] === 'marked';
+        if (!item) continue;
+        if (m[2] === 'marked') item.marked = true; else item.cls = m[2];
       }
       continue;
     }
@@ -176,23 +214,28 @@ function parseInto(text, { replace }) {
 
     const left0 = readNodeList(line, 0);
     if (!left0) { warnings.push(`Skipped: ${line}`); continue; }
+    // Read the whole line first; only a line that reads to the end changes the diagram.
     let left = left0, i = left0.end, ok = true;
-    left.list.forEach(touch);
+    const specs = [...left.list], links = [];
     for (;;) {
       const e = readEdge(line, i);
       if (!e) break;
       const right = readNodeList(line, e.end);
       if (!right) { ok = false; break; }
-      right.list.forEach(touch);
-      const style = edgeStyle(e.tok), arrow = e.tok.endsWith('>');
-      for (const a of left.list) for (const b of right.list) {
-        addEdge(a.id, b.id, e.label, style, arrow);
-        if (e.back) addEdge(b.id, a.id, '', style, true);
-      }
+      specs.push(...right.list);
+      links.push([left.list, right.list, e]);
       left = right; i = right.end;
     }
     const tail = line.slice(i).trim();
-    if (!ok || (tail && !tail.startsWith('%%'))) warnings.push(`Partly read: ${line}`);
+    if (!ok || (tail && !tail.startsWith('%%'))) { warnings.push(`Skipped: ${line}`); continue; }
+    specs.forEach(touch);
+    for (const [from, to, e] of links) {
+      const style = edgeStyle(e.tok), arrow = e.tok.endsWith('>');
+      for (const a of from) for (const b of to) {
+        addEdge(a.id, b.id, e.label, style, arrow);
+        if (e.back) addEdge(b.id, a.id, '', style, true);
+      }
+    }
   }
   if (stack.length) warnings.push('A subgraph is missing its "end"');
 
@@ -233,7 +276,13 @@ function toMermaid() {
     const base = e.style === 'dotted' ? (e.arrow ? '-.->' : '-.-') : e.style === 'thick' ? (e.arrow ? '==>' : '===') : (e.arrow ? '-->' : '---');
     L.push(`  ${e.from} ${base}${e.label ? `|${q(e.label)}|` : ''} ${e.to}`);
   }
-  const marked = [...state.nodes.values(), ...state.groups.values()].filter(x => x.marked).map(x => x.id);
+  const items = [...state.nodes.values(), ...state.groups.values()];
+  for (const [name, st] of state.classDefs) if (items.some(x => x.cls === name)) L.push(`  classDef ${name} ${propsText(st)}`);
+  const byCls = new Map();
+  for (const x of items) if (x.cls && state.classDefs.has(x.cls)) (byCls.get(x.cls) || byCls.set(x.cls, []).get(x.cls)).push(x.id);
+  for (const [name, ids] of byCls) L.push(`  class ${ids.join(',')} ${name}`);
+  for (const x of items) if (x.style && Object.keys(x.style).length) L.push(`  style ${x.id} ${propsText(x.style)}`);
+  const marked = items.filter(x => x.marked).map(x => x.id);
   if (marked.length) {
     L.push('  classDef marked fill:#ffe066,stroke:#e0a800,stroke-width:2px');
     L.push(`  class ${marked.join(',')} marked`);
@@ -463,7 +512,7 @@ function render() {
   for (const gid of [...groupBoxes.keys()].sort((a, b) => depth(a) - depth(b))) {
     const g = state.groups.get(gid), b = groupBoxes.get(gid);
     const cls = ['group', g.marked && 'marked', sel?.type === 'group' && sel.id === gid && 'sel'].filter(Boolean).join(' ');
-    html += `<g class="${cls}" data-group="${esc(gid)}"><rect x="${b.x - b.w / 2}" y="${b.y - b.h / 2}" width="${b.w}" height="${b.h}" rx="10"/>` +
+    html += `<g class="${cls}" data-group="${esc(gid)}"${colorVars(g)}><rect x="${b.x - b.w / 2}" y="${b.y - b.h / 2}" width="${b.w}" height="${b.h}" rx="10"/>` +
       `<text x="${b.x - b.w / 2 + 12}" y="${b.y - b.h / 2 + 18}">${esc(g.title)}</text></g>`;
   }
   // Labels already placed, and the boxes, so labels can step aside from them.
@@ -498,7 +547,7 @@ function render() {
   for (const [id, b] of boxes) {
     const n = state.nodes.get(id);
     const cls = ['node', n.marked && 'marked', sel?.type === 'node' && sel.id === id && 'sel', flash.has(id) && `flash-${flash.get(id)}`].filter(Boolean).join(' ');
-    html += `<g class="${cls}" data-node="${esc(id)}" transform="translate(${b.x},${b.y})">${shapeSvg(b)}${textSvg(n.label, n.shape === 'cylinder' ? 4 : 0)}</g>`;
+    html += `<g class="${cls}" data-node="${esc(id)}" transform="translate(${b.x},${b.y})"${colorVars(n)}>${shapeSvg(b)}${textSvg(n.label, n.shape === 'cylinder' ? 4 : 0)}</g>`;
   }
   if (drag?.kind === 'connect' && drag.to) {
     const a = boxes.get(drag.from);
@@ -546,7 +595,7 @@ function commit(channel, message, { fromSource = false } = {}) {
   if (message) log(channel, message);
 }
 
-function itemFingerprint(n) { return `${n.label}|${n.shape}|${n.group}|${n.marked}`; }
+function itemFingerprint(n) { return `${n.label}|${n.shape}|${n.group}|${n.marked}|${JSON.stringify(colorsOf(n))}`; }
 
 function applyText(text, channel) {
   let src = String(text || '');
@@ -836,16 +885,63 @@ async function copyText(text) {
   }
 }
 
-function showNote(note) {
-  $('#note-text').textContent = note;
-  $('#note').hidden = !note;
+// The banner: the chat's line about what changed, and a warning when part of a link was unreadable.
+function showNote(note, warnings = []) {
+  $('#note-text').textContent = note || 'Diagram updated';
+  const w = $('#note-warn');
+  w.hidden = !warnings.length;
+  w.textContent = warnings.length ? `${warnings.length} ${warnings.length === 1 ? 'line' : 'lines'} couldn't be read. Ask ${ai().short} to send the link again.` : '';
+  $('#note').hidden = !note && !warnings.length;
+}
+
+// ---------- the assistant ----------
+
+// Which chat the user works with. It names the buttons and is where Start goes; the rest is the same.
+const AIS = [
+  { id: 'm365', name: 'Microsoft 365 Copilot', short: 'Copilot', url: 'https://m365.cloud.microsoft/chat', color: '#0f6cbd' },
+  { id: 'copilot', name: 'Copilot', short: 'Copilot', url: 'https://copilot.microsoft.com/', color: '#0f6cbd' },
+  { id: 'chatgpt', name: 'ChatGPT', short: 'ChatGPT', url: 'https://chatgpt.com/', color: '#10a37f' },
+  { id: 'claude', name: 'Claude', short: 'Claude', url: 'https://claude.ai/new', color: '#c96442' },
+  { id: 'gemini', name: 'Gemini', short: 'Gemini', url: 'https://gemini.google.com/app', color: '#4285f4' },
+  { id: 'other', name: 'Another chat', short: 'your chat', url: '', color: '#64748b' },
+];
+const AI_KEY = 'kiertotie.ai';
+let aiId = (() => { try { return localStorage.getItem(AI_KEY); } catch { return null; } })() || 'm365';
+const ai = () => AIS.find(a => a.id === aiId) || AIS[0];
+
+function setAi(id) {
+  aiId = id;
+  try { localStorage.setItem(AI_KEY, id); } catch { /* storage unavailable */ }
+  paintAi();
+}
+
+function paintAi() {
+  const a = ai();
+  $('#ai-badge').innerHTML = `<span class="ai-dot" style="background:${a.color}">${esc(a.short[0].toUpperCase())}</span>${esc(a.short)}`;
+  $('#ai-chips').innerHTML = AIS.map(x => `<button type="button" role="radio" class="ai-chip" data-ai="${x.id}" aria-checked="${x.id === a.id}"><span class="ai-dot" style="background:${x.color}">${esc(x.short[0].toUpperCase())}</span>${esc(x.name)}</button>`).join('');
+  $('#ai-menu').innerHTML = AIS.map(x => `<button type="button" role="menuitemradio" data-ai="${x.id}" aria-checked="${x.id === a.id}"><span class="ai-dot" style="background:${x.color}">${esc(x.short[0].toUpperCase())}</span>${esc(x.name)}</button>`).join('');
+  $('#btn-start').textContent = `Start with ${a.short}`;
+  $('#start-help').textContent = canFloat
+    ? `Floats this board above your windows, copies the instructions${a.url ? ` and opens ${a.name}` : ''}. Paste there (${key}V) and send.`
+    : `Copies the instructions${a.url ? ` and opens ${a.name}` : ''}. Paste there (${key}V) and send.`;
+  $('#ask').placeholder = `Next request for ${a.short} (optional)`;
+  $('#btn-done').textContent = `Send to ${a.short}`;
+  $('#btn-done').title = `Copy the diagram and your request, then paste it into ${a.short}`;
+}
+
+// Open the chat in its own tab. A click may only open one window, so after the float this can be
+// refused; the banner then offers a button for it.
+function openChat() {
+  const a = ai(); if (!a.url) return true;
+  const w = window.open(a.url, 'kiertotie-chat');
+  return !!w;
 }
 
 // ---------- texts for the assistant ----------
 
 // encodeURIComponent leaves ( ) ! * ' alone; encoding them too keeps chat apps from cutting the link short.
 const encodeLink = s => encodeURIComponent(s.replace(/\n\s*/g, ';')).replace(/[()!*']/g, c => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
-const FOOTER = 'Edit on the board if you like, type your next request next to Done, press Done, then paste here (Ctrl+V) and send.';
+const FOOTER = 'Edit the board if you like, type your next request at its bottom, press Send, then paste here (Ctrl+V).';
 const exampleLink = () => `${BASE}#note=${encodeLink('Drew the web app and its API')}&m=${encodeLink('flowchart LR\nweb[Web app] -->|HTTPS| api[API]\napi --> db[(SQL)]')}`;
 
 const RULES = () => `Every reply has exactly three parts:
@@ -859,6 +955,7 @@ The diagram is a Mermaid flowchart, and always the whole diagram, never only the
 - Short ids with the label in brackets: web[Web app]. Shapes: [box] (rounded) ([pill]) [(database)] ((circle)) {decision}.
 - Links: a --> b, with text a -->|HTTPS| b, dotted a -.-> b.
 - Boundaries: subgraph azure[Azure subscription] ... end.
+- Colours: style web fill:#dbeafe,stroke:#2563eb (fill, stroke and color only), or classDef blue fill:#dbeafe,stroke:#2563eb plus class web,api blue.
 - Keep the ids the diagram already has. "class x marked" means I highlighted x: my request is about those.
 
 In the link, put ; between lines and percent-encode everything else, in the note too: space %20, > %3E, | %7C, [ %5B, ] %5D, ( %28, ) %29, { %7B, } %7D, " %22, & %26, # %23. Example:
@@ -908,8 +1005,8 @@ async function readHash() {
   if (!link) return;
   history.replaceState(null, '', BASE);
   if (!pipWin && await handOff(link)) return;
-  applyText(link.text, 'link');
-  showNote(link.note);
+  const r = applyText(link.text, 'link');
+  showNote(link.note, r.warnings || []);
   updateEmpty();
 }
 
@@ -925,10 +1022,11 @@ async function done() {
   const ok = await copyText(donePacket(request));
   if (!ok) { toast('Copying failed: open More → Show source and copy the text by hand', 5000); return; }
   $('#ask').value = '';
-  if (pipWin) { toast(`Copied. Press ${key}V in Copilot${request ? ' and send' : ' and add your request'}.`, 4000); return; }
+  const where = ai().short;
+  if (pipWin) { toast(`Copied. Press ${key}V in ${where}${request ? ' and send' : ' and add your request'}.`, 4000); return; }
   window.close();
   // Still here: the browser does not let this tab close itself (it was not opened from a link).
-  setTimeout(() => toast(`Copied. Go to Copilot, press ${key}V${request ? ' and send' : ' and add your request'}.`, 5000), 250);
+  setTimeout(() => toast(`Copied. Go to ${where}, press ${key}V${request ? ' and send' : ' and add your request'}.`, 5000), 250);
 }
 
 // Other board tabs follow along: whatever one tab saves, the others load.
@@ -990,8 +1088,8 @@ function dockBoard() {
 
 function updateFloatUI() {
   $('#btn-float').hidden = !canFloat || !!pipWin;
-  if (pipWin) $('#btn-done').textContent = '⧉ Copy for Copilot';
-  else $('#btn-done').textContent = openedByLink ? '✓ Done – back to Copilot' : '✓ Done – copy for Copilot';
+  // A link tab without a floating board: floating it is the next step, so the button stands out.
+  $('#btn-float').classList.toggle('primary', openedByLink && !pipWin);
 }
 
 // A link tab hands its diagram to a floating board, if one is open, and closes itself;
@@ -1001,7 +1099,7 @@ if (bc) bc.addEventListener('message', ({ data }) => {
   if (!data || !pipWin) return;
   if (data.type === 'floating?') bc.postMessage({ type: 'floating', to: data.from });
   if (data.type === 'apply') {
-    applyText(data.text, 'link'); showNote(data.note || ''); updateEmpty();
+    const r = applyText(data.text, 'link'); showNote(data.note || '', r.warnings || []); updateEmpty();
     bc.postMessage({ type: 'applied', to: data.from });
   }
 });
@@ -1036,17 +1134,31 @@ function setMarkMode(on) {
 function updateEmpty() {
   const empty = state.nodes.size === 0 && state.groups.size === 0;
   $('#start').hidden = !empty;
-  $('#btn-done').hidden = empty;
-  $('#ask').hidden = empty;
+  $('#composer').hidden = empty;
 }
 
-async function copyStarter(btn) {
-  const request = $('#first').value.trim();
-  const ok = await copyText(starterText(request));
-  const label = btn.dataset.label || (btn.dataset.label = btn.textContent);
-  btn.textContent = ok ? 'Copied ✓' : 'Copy failed';
-  setTimeout(() => { btn.textContent = label; }, 2000);
-  if (ok) toast(request ? `Now paste it into Copilot (or Claude) with ${key}V and send.` : 'Now paste it into Copilot (or Claude) and say what you want drawn.', 5000);
+async function copyStarter() {
+  const ok = await copyText(starterText($('#first').value.trim()));
+  toast(ok ? `Instructions copied. Paste them into ${ai().short} (${key}V) and send.` : 'Copying failed.', 5000);
+  return ok;
+}
+
+// Start: copy the instructions, float the board, open the chat. One click, so the browser allows all three
+// (copying first, as floating uses up the click).
+async function startLoop() {
+  const ok = await copyText(starterText($('#first').value.trim()));
+  if (!ok) { toast('Copying failed. Try again.', 4000); return; }
+  if (canFloat && !pipWin) await floatBoard();
+  const opened = openChat();
+  if (!opened) { showChatButton(); }
+  toast(`Instructions copied. ${opened && ai().url ? `In ${ai().short}, press` : 'Paste them into your chat with'} ${key}V and send.`, 6000);
+}
+
+function showChatButton() {
+  const a = ai(); if (!a.url) return;
+  $('#note-text').innerHTML = `Instructions copied. <button type="button" id="open-chat" class="btn-inline">Open ${esc(a.name)}</button> and paste them there.`;
+  $('#note').hidden = false;
+  $('#open-chat').addEventListener('click', () => { openChat(); $('#note').hidden = true; });
 }
 
 function closeMore() { $('#more').open = false; }
@@ -1055,17 +1167,19 @@ $('#btn-mark').addEventListener('click', () => setMarkMode(!markMode));
 $('#btn-undo').addEventListener('click', undo);
 $('#btn-done').addEventListener('click', done);
 $('#ask').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); done(); } });
-$('#first').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); copyStarter($('#btn-starter')); } });
-$('#btn-starter').addEventListener('click', e => copyStarter(e.currentTarget));
+$('#first').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); startLoop(); } });
+$('#btn-start').addEventListener('click', startLoop);
+$('#ai-chips').addEventListener('click', e => { const b = e.target.closest('[data-ai]'); if (b) setAi(b.dataset.ai); });
 $('#start-sample').addEventListener('click', () => { applyText(SAMPLE, 'sample'); updateEmpty(); });
 $('#note-close').addEventListener('click', () => showNote(''));
 $('#more').addEventListener('click', e => {
+  const pick = e.target.closest('[data-ai]'); if (pick) { setAi(pick.dataset.ai); closeMore(); toast(`Assistant: ${ai().name}`); return; }
   const act = e.target.closest('[data-act]')?.dataset.act;
   if (!act) return;
   closeMore();
   if (act === 'tidy') { pushUndo(); state.pos.clear(); commit('board', 'Tidied up the layout'); fit(); }
   if (act === 'fit') fit();
-  if (act === 'starter') copyStarter($('#btn-starter'));
+  if (act === 'starter') copyStarter();
   if (act === 'source') { document.body.classList.toggle('show-panel'); render(); }
   if (act === 'new') {
     if (!(pipWin || window).confirm('Start a new diagram? You can undo this.')) return;
@@ -1117,6 +1231,7 @@ const SAMPLE = `flowchart LR
   $('#source').value = toMermaid();
   updateReadout();
   updateFloatUI();
+  paintAi();
   fit();
   updateEmpty();
   readHash();

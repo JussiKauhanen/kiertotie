@@ -6,25 +6,26 @@ https://jussikauhanen.github.io/kiertotie/
 
 ## The loop
 
-1. **Start:** open Kiertotie, type what you want drawn (optional) and press **Copy for Copilot**. Paste it into Copilot (or Claude) and send. This first paste is the only one that carries the instructions.
-2. **The assistant answers** with one line saying what it drew, an **Open in Kiertotie** link, and a footer saying what to do next. Every answer has the same three parts.
-3. **The board opens** in a new tab, showing the assistant's line in a banner. New and changed boxes flash.
-4. **You edit:** drag, double-click to rename, Delete to remove, Shift-drag to connect. **Highlight** marks the boxes your next request is about.
-5. **Type your next request** in the box next to Done (optional), then press Enter or **Done – back to Copilot**. That copies the diagram, your highlights and the request, then closes the tab, and the browser returns to the chat.
-6. **In the chat:** press Ctrl+V (⌘V) and send. If you left the request box empty, type the request first. Back to step 2.
+1. **Start:** open Kiertotie, pick your assistant (Microsoft 365 Copilot, Copilot, ChatGPT, Claude, Gemini or another chat), optionally type what to draw, and press **Start with …**. That one click copies the instructions, floats the board above your windows and opens the chat. If the browser refuses to open the chat after the float, the board offers an **Open …** button. In the chat, press Ctrl+V (⌘V) and send.
+2. **The assistant answers** with one line saying what it drew, an **Open in Kiertotie** link, and a short footer. Click the link. The floating board updates, the link's tab closes itself, and you stay in the chat.
+3. **Edit** on the board if you like: drag, double-click to rename, Delete to remove, Shift-drag to connect. **Highlight** marks the boxes your request is about.
+4. **Type your next request** at the bottom of the board and press Enter or **Send to …**. Then paste it into the chat and send. Back to step 2.
 
-Later pastes carry only the data plus one line, "Reply in the same Kiertotie format", which keeps a long chat on track.
+Only the first paste carries the instructions. Later pastes carry the diagram, your highlights, the request and one line, "Reply in the same Kiertotie format".
+
+The banner at the top shows the assistant's line about what changed, and warns when part of a link couldn't be read. A line that doesn't read to the end is skipped completely.
+
+Colours work the Mermaid way: `style web fill:#dbeafe,stroke:#2563eb`, or `classDef blue …` plus `class web,api blue`. Text switches between dark and light to stay readable on the fill.
+
+The assistant you pick is remembered. Change it under **More**. It only sets the names on the buttons and which chat **Start** opens; the links work the same with any chat.
 
 ## Floating board (Chrome and Edge)
 
-Press **⧉ Float** and the board moves into a small window that stays on top of every other window (Document Picture-in-Picture), so it stays in view while you work in the Copilot tab:
+**Start** floats the board for you. **⧉ Float** does it later, for example on a tab that a link opened. The board moves into a small window that stays on top of every other window (Document Picture-in-Picture), so it stays in view while you work in the chat. A link tab hands its diagram to the floating board and closes itself, and the browser returns you to the chat.
 
-1. Copilot's **Open in Kiertotie** link opens a tab that hands the diagram to the floating board and closes itself. The browser returns you to Copilot, and the floating board shows the change.
-2. Edit or highlight in the floating board, type the next request, and press **⧉ Copy for Copilot**. Then press Ctrl+V in Copilot. There's no tab to close.
+Keep the Kiertotie tab open (in the background is fine), because closing it closes the floating board. **Bring it back here** in that tab, or closing the floating window, puts the board back in the tab. If no floating board is open, a link tab becomes the board, and **Send** closes that tab again.
 
-Keep the Kiertotie tab open (in the background is fine), because closing it closes the floating board. **Bring it back here** in that tab, or closing the floating window, puts the board back in the tab. If no floating board is open, links behave as in the loop above.
-
-**With Copilot in the Edge sidebar** you can skip steps 5 and 6. The sidebar reads the open board directly, through a hidden text description that includes the highlights and the reply rules.
+**With Copilot in the Edge sidebar** you can skip the paste in step 4: just ask. The sidebar reads the open board directly, through a hidden text description that includes the highlights and the reply rules.
 
 ## Details
 
