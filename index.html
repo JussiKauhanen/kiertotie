@@ -15,6 +15,7 @@
     <button id="btn-float" hidden title="Float the board above all windows, so it stays in view next to your chat">⧉ Float</button>
     <button id="btn-mark" aria-pressed="false" title="Mark boxes your next request is about (M)">Highlight</button>
     <button id="btn-undo" title="Undo (Ctrl+Z)">Undo</button>
+    <button id="btn-theme" title="Theme"></button>
     <details id="more" class="more">
       <summary>More</summary>
       <div class="menu" role="menu">
@@ -24,7 +25,7 @@
         <div class="menu-label">Assistant</div>
         <div id="ai-menu" class="ai-menu"></div>
         <button data-act="source" role="menuitem">Show source and activity</button>
-        <button data-act="new" role="menuitem">Start a new diagram</button>
+        <button data-act="new" role="menuitem">Delete and start over</button>
       </div>
     </details>
   </div>
@@ -59,19 +60,21 @@
       </fieldset>
       <label for="first">What should it draw? <span class="muted">(optional)</span></label>
       <textarea id="first" rows="3" placeholder="e.g. how an AD group grants access to an Azure web app"></textarea>
-      <a id="btn-start" class="big btn-link" target="kiertotie-chat" role="button"></a>
+      <button id="btn-start" class="big"></button>
       <p id="start-help" class="muted small"></p>
       <button id="start-sample" class="link">or look at a sample first</button>
     </div>
 
-    <div id="waiting" class="start" hidden>
-      <h1>Waiting for <span class="ai-name"></span></h1>
-      <ol>
-        <li>In <span class="ai-name"></span>, press <kbd class="paste-key"></kbd> to paste the instructions, and send.</li>
-        <li>Click <strong>Open in Kiertotie</strong> in its answer. The diagram appears here.</li>
+    <div id="waiting" class="start waiting" hidden>
+      <h1>Now over to <span class="ai-name"></span></h1>
+      <a id="wait-open" class="big btn-link" target="kiertotie-chat"></a>
+      <div id="mockup" class="mockup"></div>
+      <ol class="sr-only">
+        <li>Open <span class="ai-name"></span>.</li>
+        <li>Paste the instructions into its message box with <span class="paste-key"></span>, and send.</li>
+        <li>When it answers, click Open in Kiertotie. The diagram appears here.</li>
       </ol>
       <div class="row-links">
-        <a id="wait-open" target="kiertotie-chat">Open <span class="ai-name"></span></a>
         <button id="wait-copy" class="link">Copy the instructions again</button>
         <button id="wait-back" class="link">Start over</button>
       </div>

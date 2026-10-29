@@ -35,6 +35,7 @@
 }
 
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 html, body { height: 100%; margin: 0; }
 body { background: var(--bg); color: var(--text); font: 14px/1.4 var(--font); display: flex; flex-direction: column; }
 code { font: 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background: var(--accent-soft); padding: 1px 4px; border-radius: 4px; }
@@ -152,6 +153,25 @@ a.btn-link { display: block; text-align: center; text-decoration: none; padding:
 .row-links { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; }
 .row-links a { color: var(--accent); font-weight: 600; cursor: pointer; }
 kbd { font: 600 12px var(--font); border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 5px; padding: 1px 6px; background: var(--bg); }
+
+/* waiting card and chat mockups */
+.waiting { width: min(480px, calc(100% - 24px)); }
+.waiting #wait-open { margin: 4px 0 14px; background: var(--accent); color: #fff; font-weight: 600; font-size: 15px; }
+.mockup svg { width: 100%; height: auto; display: block; margin-bottom: 10px; }
+.mk-window { fill: var(--bg); stroke: var(--border); stroke-width: 1.5; }
+.mk-panel { fill: var(--surface); stroke: var(--border); }
+.mk-line { fill: var(--border); }
+.mk-dot { fill: var(--border); }
+.mk-host { fill: var(--muted); font: 500 10px var(--font); }
+.mk-box { fill: var(--surface); stroke: var(--muted); stroke-width: 1.4; }
+.mk-hint { fill: var(--muted); font: 12px var(--font); }
+.mk-arrow-up { fill: none; stroke: #fff; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.mk-link { fill: var(--accent); font: 600 12px var(--font); }
+.mk-link-line { stroke: var(--accent); stroke-width: 1.2; }
+.mk-squiggle { fill: none; stroke: #f5a524; stroke-width: 2.4; stroke-linecap: round; stroke-dasharray: none; }
+.mk-head { fill: none; stroke: #f5a524; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.mk-note { fill: #f5a524; font: 700 16px "Segoe Print", "Bradley Hand", "Chalkboard SE", "Comic Sans MS", cursive; }
+.mk-num { font-weight: 800; }
 
 /* composer: the next request, at the bottom of the board */
 .composer { display: flex; gap: 8px; padding: 10px 12px; background: var(--surface); border-top: 1px solid var(--border); }

@@ -902,7 +902,7 @@ const AIS = [
   { id: 'copilot', name: 'Copilot', short: 'Copilot', url: 'https://copilot.microsoft.com/', color: '#0f6cbd' },
   { id: 'chatgpt', name: 'ChatGPT', short: 'ChatGPT', url: 'https://chatgpt.com/', color: '#10a37f' },
   { id: 'claude', name: 'Claude', short: 'Claude', url: 'https://claude.ai/new', color: '#c96442' },
-  { id: 'gemini', name: 'Gemini', short: 'Gemini', url: 'https://gemini.google.com/app', color: '#4285f4' },
+  { id: 'gemini', name: 'Gemini', short: 'Gemini', url: 'https://gemini.google.com/', color: '#4285f4' },
   { id: 'other', name: 'Another chat', short: 'your chat', url: '', color: '#64748b' },
 ];
 const AI_KEY = 'kiertotie.ai';
@@ -921,8 +921,10 @@ function paintAi() {
   $('#ai-chips').innerHTML = AIS.map(x => `<button type="button" role="radio" class="ai-chip" data-ai="${x.id}" aria-checked="${x.id === a.id}"><span class="ai-dot" style="background:${x.color}">${esc(x.short[0].toUpperCase())}</span>${esc(x.name)}</button>`).join('');
   $('#ai-menu').innerHTML = AIS.map(x => `<button type="button" role="menuitemradio" data-ai="${x.id}" aria-checked="${x.id === a.id}"><span class="ai-dot" style="background:${x.color}">${esc(x.short[0].toUpperCase())}</span>${esc(x.name)}</button>`).join('');
   $('#btn-start').textContent = `Start with ${a.short}`;
-  for (const el of [$('#btn-start'), $('#wait-open')]) { if (a.url) el.href = a.url; else el.removeAttribute('href'); }
+  if (a.url) $('#wait-open').href = a.url;
+  $('#wait-open').textContent = `Open ${a.name} ↗`;
   $('#wait-open').hidden = !a.url;
+  $('#mockup').innerHTML = chatMockup(a);
   for (const el of doc().querySelectorAll('.ai-name')) el.textContent = a.short;
   $('.paste-key').textContent = `${key}V`;
   $('#start-help').textContent = canFloat
@@ -931,6 +933,55 @@ function paintAi() {
   $('#ask').placeholder = `Next request for ${a.short} (optional)`;
   $('#btn-done').textContent = `Send to ${a.short}`;
   $('#btn-done').title = `Copy the diagram and your request, then paste it into ${a.short}`;
+}
+
+// ---------- chat mockups ----------
+
+// A simplified picture of each chat window, with hand-drawn arrows to the three things to do there.
+// Shapes and names only: where the message box, the send button and the reply sit in that chat.
+const CHAT_LOOKS = {
+  m365: { host: 'm365.cloud.microsoft', side: 'rail', box: 'box', send: '#0f6cbd', hint: 'Message Copilot' },
+  copilot: { host: 'copilot.microsoft.com', side: null, box: 'pill', send: '#0f6cbd', hint: 'Message Copilot' },
+  chatgpt: { host: 'chatgpt.com', side: 'bar', box: 'pill', send: 'var(--text)', hint: 'Ask anything' },
+  claude: { host: 'claude.ai', side: 'bar', box: 'box', send: '#c96442', hint: 'Reply to Claude…' },
+  gemini: { host: 'gemini.google.com', side: 'bar', box: 'pill', send: '#4285f4', hint: 'Ask Gemini' },
+  other: { host: 'your chat', side: null, box: 'box', send: '#64748b', hint: 'Type a message' },
+};
+
+function chatMockup(a) {
+  const L = CHAT_LOOKS[a.id] || CHAT_LOOKS.other;
+  const W = 420, H = 300;
+  const x0 = L.side === 'bar' ? 92 : L.side === 'rail' ? 50 : 22, x1 = W - 22;
+  const cw = x1 - x0;
+  const lines = (x, y, ws) => ws.map((w, i) => `<rect x="${x}" y="${y + i * 11}" width="${w}" height="5" rx="2.5" class="mk-line"/>`).join('');
+  const side = L.side === 'bar'
+    ? `<rect x="12" y="40" width="66" height="${H - 52}" rx="8" class="mk-panel"/>${lines(22, 56, [44, 36, 40, 30])}`
+    : L.side === 'rail' ? `<rect x="12" y="40" width="26" height="${H - 52}" rx="8" class="mk-panel"/>${[0, 1, 2, 3].map(i => `<circle cx="25" cy="${60 + i * 26}" r="6" class="mk-line"/>`).join('')}` : '';
+  // the conversation: the pasted instructions, then the answer with its link
+  const bubble = `<rect x="${x1 - 150}" y="54" width="150" height="34" rx="12" class="mk-panel"/>${lines(x1 - 140, 64, [120, 86])}`;
+  const answerY = 104;
+  const answer = `${lines(x0 + 4, answerY, [cw * 0.7, cw * 0.55])}<text x="${x0 + 4}" y="${answerY + 38}" class="mk-link">Open in Kiertotie</text>` +
+    `<line x1="${x0 + 4}" y1="${answerY + 41}" x2="${x0 + 118}" y2="${answerY + 41}" class="mk-link-line"/>${lines(x0 + 4, answerY + 52, [cw * 0.6])}`;
+  // the message box and send button
+  const by = H - 62, bh = L.box === 'pill' ? 34 : 44, br = L.box === 'pill' ? 17 : 12;
+  const sx = x1 - (L.box === 'pill' ? 21 : 24), sy = by + bh / 2 + (L.box === 'pill' ? 0 : 4);
+  const box = `<rect x="${x0}" y="${by}" width="${cw}" height="${bh}" rx="${br}" class="mk-box"/>` +
+    `<text x="${x0 + 14}" y="${by + (L.box === 'pill' ? 21 : 18)}" class="mk-hint">${esc(L.hint)}</text>` +
+    `<circle cx="${sx}" cy="${sy}" r="11" style="fill:${L.send}"/><path d="M${sx} ${sy + 5} V${sy - 5} M${sx - 4} ${sy - 1} L${sx} ${sy - 5} L${sx + 4} ${sy - 1}" class="mk-arrow-up"${L.send === 'var(--text)' ? ' style="stroke:var(--bg)"' : ''}/>`;
+  // squiggly arrows and notes
+  const pasteAt = { x: x0 + cw * 0.38, y: by - 2 }, sendAt = { x: sx + 2, y: sy - 13 }, linkAt = { x: x0 + 124, y: answerY + 34 };
+  const squiggle = (fx, fy, tx, ty, bend) => `<path d="M${fx} ${fy} C ${fx + bend} ${fy + 18}, ${tx - bend} ${ty - 30}, ${tx} ${ty}" class="mk-squiggle" marker-end="url(#mk-head)"/>`;
+  const note = (x, y, n, t, anchor = 'start') => `<text x="${x}" y="${y}" class="mk-note" text-anchor="${anchor}"><tspan class="mk-num">${n}</tspan> ${esc(t)}</text>`;
+  return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Where to paste, send and click in ${esc(a.name)}">
+  <defs><marker id="mk-head" viewBox="0 0 10 10" refX="7" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1 L8 5 L1 9" class="mk-head"/></marker></defs>
+  <rect x="1" y="1" width="${W - 2}" height="${H - 2}" rx="14" class="mk-window"/>
+  <circle cx="20" cy="18" r="4" class="mk-dot"/><circle cx="33" cy="18" r="4" class="mk-dot"/><circle cx="46" cy="18" r="4" class="mk-dot"/>
+  <rect x="${W / 2 - 80}" y="9" width="160" height="18" rx="9" class="mk-panel"/><text x="${W / 2}" y="22" text-anchor="middle" class="mk-host">${esc(L.host)}</text>
+  ${side}${bubble}${answer}${box}
+  ${note(x0 + 30, by - 50, '1', `Paste here (${key}V)`)}${squiggle(x0 + 60, by - 44, pasteAt.x, pasteAt.y, 30)}
+  ${note(x1 - 6, by - 24, '2', 'then send', 'end')}${squiggle(x1 - 30, by - 18, sendAt.x, sendAt.y, -14)}
+  ${note(x1 - 6, answerY + 4, '3', 'click when it answers', 'end')}${squiggle(x1 - 70, answerY + 10, linkAt.x + 4, linkAt.y - 4, -40)}
+</svg>`;
 }
 
 // ---------- texts for the assistant ----------
@@ -1059,6 +1110,7 @@ async function floatBoard() {
   }
   w.document.title = 'Kiertotie';
   w.document.body.className = document.body.className;
+  if (document.documentElement.dataset.theme) w.document.documentElement.dataset.theme = document.documentElement.dataset.theme;
   w.document.body.classList.add('floating');
   // The readout stays here, for the Edge sidebar Copilot reading this tab.
   for (const el of [...document.body.children]) if (el.tagName !== 'SCRIPT' && !['readout', 'docked', 'handed'].includes(el.id)) w.document.body.append(el);
@@ -1140,14 +1192,14 @@ async function copyStarter() {
   return ok;
 }
 
-// Start: copy the instructions, float the board, open the chat, all from one click. Start is a real link to
-// the chat, because the browser opens a clicked link by itself, while a script may open only one window per
-// click and floating takes that one. The copy and the float are set off first, before the link opens.
+// Start: copy the instructions and float the board. The waiting card then shows how to finish in the chat.
 let started = false;
-function startLoop(e) {
-  if (!ai().url) e.preventDefault();
+function startLoop() {
   const copying = copyText(starterText($('#first').value.trim()));
+  // Floating uses up the click, so the chat opens from its own button on the waiting card.
+  // Without a float the click is still free, and the chat opens straight away.
   const floating = canFloat && !pipWin ? floatBoard() : null;
+  if (!canFloat && ai().url) window.open(ai().url, 'kiertotie-chat');
   started = true; updateEmpty();
   copying.then(ok => toast(ok ? `Instructions copied. In ${ai().short}, press ${key}V and send.` : 'Copying failed: use Copy the instructions again.', 6000));
   return floating;
@@ -1159,10 +1211,34 @@ $('#btn-mark').addEventListener('click', () => setMarkMode(!markMode));
 $('#btn-undo').addEventListener('click', undo);
 $('#btn-done').addEventListener('click', done);
 $('#ask').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); done(); } });
-$('#first').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); $('#btn-start').click(); } });
+$('#first').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); startLoop(); } });
 $('#btn-start').addEventListener('click', startLoop);
 $('#wait-copy').addEventListener('click', copyStarter);
-$('#wait-back').addEventListener('click', () => { started = false; updateEmpty(); });
+$('#wait-back').addEventListener('click', startOver);
+$('#btn-theme').addEventListener('click', () => setTheme(THEMES[(THEMES.indexOf(theme) + 1) % THEMES.length]));
+
+// Start over: delete the diagram, after asking, and go back to the start card. Undo still brings it back.
+function startOver() {
+  const hasDiagram = state.nodes.size || state.groups.size;
+  if (hasDiagram && !(pipWin || window).confirm('Delete this diagram and start over?')) return;
+  pushUndo(); parseInto('flowchart LR', { replace: true }); state.pos.clear(); showNote('');
+  started = false; commit('board', 'Started over'); updateEmpty();
+}
+
+// Day and night: follow the system, or pick light or dark. Applied to the floating window too.
+const THEMES = ['system', 'light', 'dark'];
+const THEME_KEY = 'kiertotie.theme';
+let theme = (() => { try { return localStorage.getItem(THEME_KEY); } catch { return null; } })() || 'system';
+function setTheme(t) {
+  theme = THEMES.includes(t) ? t : 'system';
+  try { localStorage.setItem(THEME_KEY, theme); } catch { /* storage unavailable */ }
+  for (const d of [document, pipWin && pipWin.document].filter(Boolean)) {
+    if (theme === 'system') delete d.documentElement.dataset.theme; else d.documentElement.dataset.theme = theme;
+  }
+  $('#btn-theme').textContent = { system: '◐ Auto', light: '☀ Day', dark: '☾ Night' }[theme];
+  $('#btn-theme').title = `Theme: ${{ system: 'follows your system', light: 'day', dark: 'night' }[theme]}. Click to change.`;
+  render();
+}
 $('#ai-chips').addEventListener('click', e => { const b = e.target.closest('[data-ai]'); if (b) setAi(b.dataset.ai); });
 $('#start-sample').addEventListener('click', () => { applyText(SAMPLE, 'sample'); updateEmpty(); });
 $('#note-close').addEventListener('click', () => showNote(''));
@@ -1175,10 +1251,7 @@ $('#more').addEventListener('click', e => {
   if (act === 'fit') fit();
   if (act === 'starter') copyStarter();
   if (act === 'source') { document.body.classList.toggle('show-panel'); render(); }
-  if (act === 'new') {
-    if (!(pipWin || window).confirm('Start a new diagram? You can undo this.')) return;
-    pushUndo(); parseInto('flowchart LR', { replace: true }); state.pos.clear(); showNote(''); commit('board', 'Started over'); updateEmpty();
-  }
+  if (act === 'new') startOver();
 });
 onDoc('click', e => { if (!e.target.closest('#more')) closeMore(); });
 
@@ -1225,6 +1298,7 @@ const SAMPLE = `flowchart LR
   $('#source').value = toMermaid();
   updateReadout();
   updateFloatUI();
+  setTheme(theme);
   paintAi();
   fit();
   updateEmpty();

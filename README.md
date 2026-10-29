@@ -6,7 +6,7 @@ https://jussikauhanen.github.io/kiertotie/
 
 ## The loop
 
-1. **Start:** open Kiertotie, pick your assistant (Microsoft 365 Copilot, Copilot, ChatGPT, Claude, Gemini or another chat), optionally type what to draw, and press **Start with …**. That one click copies the instructions, floats the board above your windows and opens the chat. If the browser refuses to open the chat after the float, the board offers an **Open …** button. In the chat, press Ctrl+V (⌘V) and send.
+1. **Start:** open Kiertotie, pick your assistant (Microsoft 365 Copilot, Copilot, ChatGPT, Claude, Gemini or another chat), optionally type what to draw, and press **Start with …**. That click copies the instructions and floats the board. The floating board then shows **Open …** for your chat, with a simple picture of that chat window and arrows to where you paste, send and click. (The browser only lets one click open one window, and the float takes that one.) In the chat, press Ctrl+V (⌘V) and send.
 2. **The assistant answers** with one line saying what it drew, an **Open in Kiertotie** link, and a short footer. Click the link. The floating board updates, the link's tab closes itself, and you stay in the chat.
 3. **Edit** on the board if you like: drag, double-click to rename, Delete to remove, Shift-drag to connect. **Highlight** marks the boxes your request is about.
 4. **Type your next request** at the bottom of the board and press Enter or **Send to …**. Then paste it into the chat and send. Back to step 2.
