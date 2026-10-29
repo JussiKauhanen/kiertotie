@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Kiertotie</title>
 <meta name="description" content="A diagram board for AI chats that can only chat: the chat answers with a link, you edit, Send passes it back.">
-<link rel="stylesheet" href="style.css?v=20261029-4">
+<link rel="stylesheet" href="style.css?v=20261029-7">
 </head>
 <body>
 <header class="bar">
@@ -85,7 +85,31 @@
       </div>
     </div>
 
-    <p class="hint">Drag to move · Shift-drag to connect · Double-click to edit · Delete removes</p>
+    <nav id="rail" class="rail" aria-label="Add to the board">
+      <button data-tool="select" aria-pressed="true" title="Select and move (V)"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 3 L15 10 L10.5 11 L13 16 L11 17 L8.5 12 L5 15 Z"/></svg></button>
+      <button data-tool="sticky" title="Sticky note (N)"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 4 H16 V12 L12 16 H4 Z M16 12 H12 V16"/></svg></button>
+      <button data-tool="text" title="Text (T)"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 5 V4 H16 V5 M10 4 V16 M7.5 16 H12.5"/></svg></button>
+      <button data-pop="shape" aria-expanded="false" title="Shapes (R)"><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="3" width="9" height="9" rx="1.5"/><circle cx="13" cy="13" r="4.5"/></svg></button>
+      <button data-tool="frame" title="Frame: a group to drop boxes into"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M6 2 V18 M14 2 V18 M2 6 H18 M2 14 H18"/></svg></button>
+      <button data-pop="icon" aria-expanded="false" title="Azure, Power Platform and Dynamics 365 icons (I)"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 2.5 L17 6.5 V13.5 L10 17.5 L3 13.5 V6.5 Z M3 6.5 L10 10.5 L17 6.5 M10 10.5 V17.5"/></svg></button>
+    </nav>
+    <div id="shape-pop" class="pop shape-pop" hidden role="menu" aria-label="Shapes">
+      <button data-shape="box" title="Box"><svg viewBox="0 0 28 20"><rect x="2" y="3" width="24" height="14" rx="2"/></svg></button>
+      <button data-shape="round" title="Rounded box"><svg viewBox="0 0 28 20"><rect x="2" y="3" width="24" height="14" rx="5"/></svg></button>
+      <button data-shape="stadium" title="Pill"><svg viewBox="0 0 28 20"><rect x="2" y="3" width="24" height="14" rx="7"/></svg></button>
+      <button data-shape="circle" title="Circle"><svg viewBox="0 0 28 20"><circle cx="14" cy="10" r="8"/></svg></button>
+      <button data-shape="diamond" title="Decision"><svg viewBox="0 0 28 20"><path d="M14 1.5 L25 10 L14 18.5 L3 10 Z"/></svg></button>
+      <button data-shape="cylinder" title="Database"><svg viewBox="0 0 28 20"><path d="M7 4.5 C7 2, 21 2, 21 4.5 V15.5 C21 18, 7 18, 7 15.5 Z M7 4.5 C7 7, 21 7, 21 4.5"/></svg></button>
+      <button data-shape="hexagon" title="Hexagon"><svg viewBox="0 0 28 20"><path d="M7 3 H21 L26 10 L21 17 H7 L2 10 Z"/></svg></button>
+    </div>
+    <div id="icon-pop" class="pop icon-pop" hidden aria-label="Icons">
+      <input id="icon-q" type="search" placeholder="Search icons, e.g. key vault" autocomplete="off" aria-label="Search icons">
+      <div id="icon-tabs" class="icon-tabs"><button data-pack="azure">Azure</button><button data-pack="pp">Power Platform</button><button data-pack="d365">Dynamics 365</button></div>
+      <div id="icon-grid" class="icon-grid"></div>
+    </div>
+    <div id="ctx" class="ctx" hidden role="toolbar" aria-label="Selection"></div>
+
+    <p class="hint">Drag to move · drag a dot to connect · Double-click to edit · Delete removes</p>
   </section>
 
   <aside class="panel">
@@ -128,6 +152,6 @@
 
 <!-- Bump ?v= on every release, so a page never pairs with a cached older script (GitHub Pages caches for 10 minutes). -->
 <script src="vendor/qrcode.js?v=1"></script>
-<script src="app.js?v=20261029-5"></script>
+<script src="app.js?v=20261029-7"></script>
 </body>
 </html>

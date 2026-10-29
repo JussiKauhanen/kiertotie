@@ -67,12 +67,33 @@ function readShape(s, i) {
   return null;
 }
 
+// Mermaid's newer shape names (id@{ shape: cyl }), plus sticky notes, which Mermaid itself lacks.
+const NAMED_SHAPES = { rect: 'box', box: 'box', rounded: 'round', round: 'round', stadium: 'stadium', pill: 'stadium',
+  cyl: 'cylinder', cylinder: 'cylinder', db: 'cylinder', database: 'cylinder', circle: 'circle', circ: 'circle',
+  diam: 'diamond', diamond: 'diamond', decision: 'diamond', hex: 'hexagon', hexagon: 'hexagon', subproc: 'subroutine',
+  subroutine: 'subroutine', odd: 'flag', text: 'text', sticky: 'sticky', note: 'sticky' };
+
+// id@{ icon: "azure:key-vaults", label: "Secrets" } or id@{ shape: text, label: "..." }
+function readAttrs(s, i) {
+  if (!s.startsWith('@{', i)) return null;
+  let j = i + 2, inQ = false;
+  for (; j < s.length; j++) { if (s[j] === '"') inQ = !inQ; else if (s[j] === '}' && !inQ) break; }
+  if (j >= s.length) return null;
+  const attrs = {};
+  for (const m of s.slice(i + 2, j).matchAll(/(\w+)\s*:\s*(?:"([^"]*)"|([^,]+))/g)) attrs[m[1].toLowerCase()] = (m[2] ?? m[3]).trim();
+  const out = { end: j + 1 };
+  if (attrs.icon) { out.shape = 'icon'; out.icon = attrs.icon; }
+  else out.shape = NAMED_SHAPES[(attrs.shape || '').toLowerCase()] || 'box';
+  if (attrs.label != null) out.label = cleanLabel(attrs.label);
+  return out;
+}
+
 function readNode(s, i) {
   i += s.slice(i).match(/^\s*/)[0].length;
   const m = s.slice(i).match(ID_RE);
   if (!m) return null;
   const node = { id: m[0], end: i + m[0].length };
-  const sh = readShape(s, node.end);
+  const sh = readAttrs(s, node.end) || readShape(s, node.end);
   if (sh) Object.assign(node, sh);
   const cls = s.slice(node.end).match(/^:::([\w-]+)/);
   if (cls) { node.cls = cls[1]; node.end += cls[0].length; }
@@ -136,7 +157,10 @@ function colorVars(item) {
 }
 
 // Parses text into the current state. replace: start from an empty diagram (manual positions are kept).
-function parseInto(text, { replace }) {
+// keep: a diagram that replaces this one keeps the line routes the user picked, like their positions.
+// Undo and loading pass keep: false, since their text carries its own routes.
+function parseInto(text, { replace, keep = true }) {
+  const keptRoutes = new Map(keep ? state.edges.filter(e => e.route).map(e => [`${e.from}>${e.to}`, e.route]) : []);
   if (replace) { state.nodes = new Map(); state.groups = new Map(); state.edges = []; state.classDefs = new Map(); }
   const warnings = [];
   const stack = [];
@@ -147,12 +171,17 @@ function parseInto(text, { replace }) {
   const touch = spec => {
     let n = state.nodes.get(spec.id);
     if (!n) { n = { id: spec.id, label: spec.id, shape: 'box', group: null, marked: false, implicit: true }; state.nodes.set(spec.id, n); fresh.add(spec.id); }
-    if (spec.shape) { n.label = spec.label || spec.id; n.shape = spec.shape; n.implicit = false; }
+    if (spec.shape) {
+      if (spec.label) n.label = spec.label; else if (n.implicit) n.label = spec.id;
+      n.shape = spec.shape; n.icon = spec.icon || null; n.implicit = false;
+    }
     const g = stack[stack.length - 1] || null;
     if (g && (fresh.has(spec.id) || spec.shape || !n.group)) n.group = g;
     if (spec.cls === 'marked') n.marked = true;
+    else if (spec.cls === 'sticky') n.shape = 'sticky';
     else if (spec.cls) n.cls = spec.cls;
   };
+  const pendRoute = new Map();
   const addEdge = (from, to, label, style, arrow) => {
     const e = state.edges.find(x => x.from === from && x.to === to);
     if (e) Object.assign(e, { label, style, arrow });
@@ -162,10 +191,14 @@ function parseInto(text, { replace }) {
   for (const raw of lines) {
     const line = raw.trim();
     let m;
-    if ((m = line.match(/^%%\s*@pos\s+(\S+)\s+(-?[\d.]+)\s+(-?[\d.]+)\s*$/))) { pendPos.set(m[1], { x: +m[2], y: +m[3] }); continue; }
+    if ((m = line.match(/^%%\s*@pos\s+(\S+)\s+(-?[\d.]+)\s+(-?[\d.]+)(?:\s+([\d.]+)\s+([\d.]+))?\s*$/))) {
+      pendPos.set(m[1], m[4] ? { x: +m[2], y: +m[3], w: +m[4], h: +m[5] } : { x: +m[2], y: +m[3] });
+      continue;
+    }
+    if ((m = line.match(/^%%\s*@route\s+(\S+)\s+(\S+)\s+(curved|elbow|straight)\s*$/))) { pendRoute.set(`${m[1]}>${m[2]}`, m[3]); continue; }
     if (!line || line.startsWith('%%')) continue;
     if ((m = line.match(/^(?:flowchart|graph)\s*(LR|RL|TD|TB|BT)?\s*$/i))) { state.dir = (m[1] || 'TD').toUpperCase().replace('TB', 'TD'); continue; }
-    if ((m = line.match(/^classDef\s+([\w-]+)\s+(.+)$/))) { if (m[1] !== 'marked') state.classDefs.set(m[1], styleProps(m[2])); continue; }
+    if ((m = line.match(/^classDef\s+([\w-]+)\s+(.+)$/))) { if (m[1] !== 'marked' && m[1] !== 'sticky') state.classDefs.set(m[1], styleProps(m[2])); continue; }
     if ((m = line.match(/^style\s+([\w\u00C0-\uFFFF-]+)\s+(.+)$/))) {
       const item = state.nodes.get(m[1]) || state.groups.get(m[1]);
       if (item) item.style = { ...item.style, ...styleProps(m[2]) };
@@ -192,7 +225,9 @@ function parseInto(text, { replace }) {
       for (const id of splitIds(m[1])) {
         const item = state.nodes.get(id) || state.groups.get(id);
         if (!item) continue;
-        if (m[2] === 'marked') item.marked = true; else item.cls = m[2];
+        if (m[2] === 'marked') item.marked = true;
+        else if (m[2] === 'sticky') { if (state.nodes.has(id)) item.shape = 'sticky'; }
+        else item.cls = m[2];
       }
       continue;
     }
@@ -241,17 +276,21 @@ function parseInto(text, { replace }) {
   }
   if (stack.length) warnings.push('A subgraph is missing its "end"');
   for (const [id, p] of pendPos) state.pos.set(id, p);
+  for (const e of state.edges) {
+    const k = `${e.from}>${e.to}`, r = pendRoute.get(k) || (!e.route && keptRoutes.get(k));
+    if (r) { if (r === 'straight') delete e.route; else e.route = r; }
+  }
 
   // An implicit node with a group's id is a link to that group, not a box.
   for (const [id, n] of state.nodes) if (n.implicit && state.groups.has(id)) state.nodes.delete(id);
   for (const g of state.groups.values()) if (g.parent && !state.groups.has(g.parent)) g.parent = null;
   for (const n of state.nodes.values()) if (n.group && !state.groups.has(n.group)) n.group = null;
-  for (const id of [...state.pos.keys()]) if (!state.nodes.has(id)) state.pos.delete(id);
+  for (const id of [...state.pos.keys()]) if (!state.nodes.has(id) && !state.groups.has(id)) state.pos.delete(id);
   return { warnings };
 }
 
 function removeItem(id) {
-  if (state.nodes.delete(id)) state.pos.delete(id);
+  if (state.nodes.delete(id) || state.groups.has(id)) state.pos.delete(id);
   if (state.groups.has(id)) {
     const g = state.groups.get(id);
     for (const n of state.nodes.values()) if (n.group === id) n.group = g.parent;
@@ -265,7 +304,11 @@ const q = s => `"${s.replace(/"/g, '#quot;').replace(/\n/g, '<br>')}"`;
 
 function toMermaid() {
   const L = [`flowchart ${state.dir}`];
-  const decl = n => { const [o, c] = WRAP[n.shape] || WRAP.box; return `${n.id}${o}${q(n.label)}${c}`; };
+  const decl = n => {
+    if (n.shape === 'icon') return `${n.id}@{ icon: "${n.icon}", label: ${q(n.label)} }`;
+    if (n.shape === 'text') return `${n.id}@{ shape: text, label: ${q(n.label)} }`;
+    const [o, c] = WRAP[n.shape] || WRAP.box; return `${n.id}${o}${q(n.label)}${c}`;
+  };
   const emit = (gid, ind) => {
     for (const g of state.groups.values()) if (g.parent === gid) {
       L.push(`${ind}subgraph ${g.id}[${q(g.title)}]`);
@@ -284,6 +327,11 @@ function toMermaid() {
   const byCls = new Map();
   for (const x of items) if (x.cls && state.classDefs.has(x.cls)) (byCls.get(x.cls) || byCls.set(x.cls, []).get(x.cls)).push(x.id);
   for (const [name, ids] of byCls) L.push(`  class ${ids.join(',')} ${name}`);
+  const stickies = [...state.nodes.values()].filter(n => n.shape === 'sticky').map(n => n.id);
+  if (stickies.length) {
+    L.push(`  classDef sticky fill:${STICKY.fill},stroke:${STICKY.stroke}`);
+    L.push(`  class ${stickies.join(',')} sticky`);
+  }
   for (const x of items) if (x.style && Object.keys(x.style).length) L.push(`  style ${x.id} ${propsText(x.style)}`);
   const marked = items.filter(x => x.marked).map(x => x.id);
   if (marked.length) {
@@ -291,6 +339,18 @@ function toMermaid() {
     L.push(`  class ${marked.join(',')} marked`);
   }
   return L.join('\n');
+}
+
+// Canvas lines: what only the board needs (hand-placed positions and sizes, line routes). Mermaid skips %% lines.
+function canvasLines() {
+  const r = Math.round, L = [];
+  for (const [id, p] of state.pos) {
+    if (!state.nodes.has(id) && !state.groups.has(id)) continue;
+    if (p.x == null) continue;
+    L.push(`%% @pos ${id} ${r(p.x)} ${r(p.y)}${p.w ? ` ${r(p.w)} ${r(p.h)}` : ''}`);
+  }
+  for (const e of state.edges) if (e.route) L.push(`%% @route ${e.from} ${e.to} ${e.route}`);
+  return L;
 }
 
 // ---------- layout ----------
@@ -301,15 +361,46 @@ function textWidth(s, size = 14, weight = 500) {
   return measure.measureText(s).width;
 }
 
-function nodeSize(n) {
-  const lines = n.label.split('\n');
+// Greedy word wrap; a word longer than the width keeps a line of its own.
+function wrapLabel(label, maxW, size = 14, weight = 500) {
+  const out = [];
+  for (const para of String(label).split('\n')) {
+    let line = '';
+    for (const word of para.split(/\s+/).filter(Boolean)) {
+      const next = line ? `${line} ${word}` : word;
+      if (line && textWidth(next, size, weight) > maxW) { out.push(line); line = word; } else line = next;
+    }
+    out.push(line);
+  }
+  return out;
+}
+
+// p: the hand-set size, if the user resized the box.
+function nodeSize(n, p = {}) {
+  const fw = p.w, fh = p.h || 0;
+  if (n.shape === 'icon') {
+    const lines = wrapLabel(n.label, fw ? fw - 8 : 130, 12);
+    const tw = Math.max(0, ...lines.map(l => textWidth(l, 12)));
+    return { w: fw || Math.max(64, tw + 12), h: 50 + lines.length * 15, lines };
+  }
+  if (n.shape === 'sticky') {
+    const w = fw || 160, lines = wrapLabel(n.label, w - 28);
+    return { w, h: Math.max(fh || w, lines.length * 18 + 28), lines };
+  }
+  if (n.shape === 'text') {
+    const lines = wrapLabel(n.label, fw ? fw - 8 : 320, 16);
+    const tw = Math.max(0, ...lines.map(l => textWidth(l, 16)));
+    return { w: fw || Math.max(40, tw + 12), h: Math.max(fh, lines.length * 21 + 10), lines };
+  }
+  const lines = wrapLabel(n.label, fw ? fw - 24 : 200);
   const tw = Math.max(...lines.map(l => textWidth(l)));
   let w = Math.max(100, tw + 32), h = Math.max(44, lines.length * 18 + 24);
   if (n.shape === 'circle') w = h = Math.max(w, h, 64);
   else if (n.shape === 'diamond') { w = Math.max(110, tw * 1.35 + 52); h = Math.max(64, lines.length * 18 + 46); }
   else if (n.shape === 'hexagon' || n.shape === 'flag') w += 24;
   else if (n.shape === 'cylinder') h += 14;
-  return { w, h };
+  if (fw) { w = fw; h = Math.max(fh, lines.length * 18 + 16); }
+  return { w, h, lines };
 }
 
 function chainOf(id) {
@@ -321,7 +412,7 @@ function chainOf(id) {
 
 function layout() {
   const ids = [...state.nodes.keys()];
-  const size = new Map(ids.map(id => [id, nodeSize(state.nodes.get(id))]));
+  const size = new Map(ids.map(id => [id, nodeSize(state.nodes.get(id), state.pos.get(id))]));
   const out = new Map(ids.map(id => [id, []]));
   for (const e of state.edges) if (e.from !== e.to && out.has(e.from) && out.has(e.to)) out.get(e.from).push(e.to);
 
@@ -442,25 +533,48 @@ function layout() {
   boxes = new Map();
   for (const id of ids) {
     const p = state.pos.get(id) || result.get(id);
-    boxes.set(id, { ...p, ...size.get(id), shape: state.nodes.get(id).shape });
+    boxes.set(id, { x: p.x, y: p.y, ...size.get(id), shape: state.nodes.get(id).shape });
   }
   computeGroupBoxes();
 }
 
-function computeGroupBoxes() {
-  groupBoxes = new Map();
-  const depth = g => { let d = 0, p = state.groups.get(g)?.parent; while (p && d < 20) { d++; p = state.groups.get(p)?.parent; } return d; };
-  const gs = [...state.groups.keys()].sort((a, b) => depth(b) - depth(a));
+const groupDepth = g => { let d = 0, p = state.groups.get(g)?.parent; while (p && d < 20) { d++; p = state.groups.get(p)?.parent; } return d; };
+
+// A frame wraps its boxes and subframes; a frame the user sized by hand is at least that big.
+// skip: boxes left out, to ask which frame a dragged box was dropped into.
+function groupBoxesFor(skip = null) {
+  const out = new Map();
+  const gs = [...state.groups.keys()].sort((a, b) => groupDepth(b) - groupDepth(a));
   for (const gid of gs) {
     const rects = [];
-    for (const n of state.nodes.values()) if (n.group === gid && boxes.has(n.id)) rects.push(boxes.get(n.id));
-    for (const c of state.groups.values()) if (c.parent === gid && groupBoxes.has(c.id)) rects.push(groupBoxes.get(c.id));
-    if (!rects.length) continue;
+    for (const n of state.nodes.values()) if (n.group === gid && boxes.has(n.id) && !skip?.has(n.id)) rects.push(boxes.get(n.id));
+    for (const c of state.groups.values()) if (c.parent === gid && out.has(c.id)) rects.push(out.get(c.id));
     const pad = 18, top = 30;
-    const x0 = Math.min(...rects.map(r => r.x - r.w / 2)) - pad, x1 = Math.max(...rects.map(r => r.x + r.w / 2)) + pad;
-    const y0 = Math.min(...rects.map(r => r.y - r.h / 2)) - top, y1 = Math.max(...rects.map(r => r.y + r.h / 2)) + pad;
-    groupBoxes.set(gid, { x: (x0 + x1) / 2, y: (y0 + y1) / 2, w: x1 - x0, h: y1 - y0 });
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    if (rects.length) {
+      x0 = Math.min(...rects.map(r => r.x - r.w / 2)) - pad; x1 = Math.max(...rects.map(r => r.x + r.w / 2)) + pad;
+      y0 = Math.min(...rects.map(r => r.y - r.h / 2)) - top; y1 = Math.max(...rects.map(r => r.y + r.h / 2)) + pad;
+    }
+    const own = state.pos.get(gid);
+    if (own?.w) {
+      x0 = Math.min(x0, own.x - own.w / 2); x1 = Math.max(x1, own.x + own.w / 2);
+      y0 = Math.min(y0, own.y - own.h / 2); y1 = Math.max(y1, own.y + own.h / 2);
+    }
+    if (x0 === Infinity) continue;
+    out.set(gid, { x: (x0 + x1) / 2, y: (y0 + y1) / 2, w: x1 - x0, h: y1 - y0 });
   }
+  return out;
+}
+function computeGroupBoxes() { groupBoxes = groupBoxesFor(); }
+
+// The innermost frame under a point.
+function groupAt(p, skip = null, not = null) {
+  let best = null, area = Infinity;
+  for (const [gid, b] of groupBoxesFor(skip)) {
+    if (not?.has(gid)) continue;
+    if (Math.abs(p.x - b.x) <= b.w / 2 && Math.abs(p.y - b.y) <= b.h / 2 && b.w * b.h < area) { best = gid; area = b.w * b.h; }
+  }
+  return best;
 }
 
 // ---------- rendering ----------
@@ -483,14 +597,76 @@ function shapeSvg(b) {
     }
     case 'subroutine': return `<rect class="node-shape" x="${x}" y="${y}" width="${w}" height="${h}" rx="3"/>` +
       `<path class="node-shape" d="M${x + 8},${y} v${h} M${-x - 8},${y} v${h}"/>`;
+    case 'sticky': return `<rect class="node-shape" x="${x}" y="${y}" width="${w}" height="${h}" rx="3"/>`;
+    case 'text': case 'icon': return `<rect class="node-shape" x="${x}" y="${y}" width="${w}" height="${h}" rx="6"/>`;
     default: return `<rect class="node-shape" x="${x}" y="${y}" width="${w}" height="${h}" rx="6"/>`;
   }
 }
 
-function textSvg(label, dy = 0) {
-  const lines = label.split('\n');
-  const start = -(lines.length - 1) * 9 + dy;
-  return `<text text-anchor="middle" dominant-baseline="central">${lines.map((l, i) => `<tspan x="0" y="${start + i * 18}">${esc(l)}</tspan>`).join('')}</text>`;
+function textSvg(lines, dy = 0, step = 18) {
+  const start = -(lines.length - 1) * step / 2 + dy;
+  return `<text text-anchor="middle" dominant-baseline="central">${lines.map((l, i) => `<tspan x="0" y="${start + i * step}">${esc(l)}</tspan>`).join('')}</text>`;
+}
+
+// What goes inside a node's <g>, centred on 0,0.
+function nodeInner(n, b) {
+  if (n.shape === 'icon') {
+    const ic = iconFor(n.icon), top = -b.h / 2;
+    const pic = ic ? `<image href="${ic.uri}" x="-20" y="${top + 2}" width="40" height="40"/>`
+      : `<rect class="icon-missing" x="-20" y="${top + 2}" width="40" height="40" rx="8"/><text class="icon-missing-q" x="0" y="${top + 23}" text-anchor="middle" dominant-baseline="central">${Icons.state === 'failed' || Icons.state === 'ready' ? '?' : '…'}</text>`;
+    const lines = b.lines, start = top + 50 + 7;
+    return shapeSvg(b) + pic + `<text class="icon-label" text-anchor="middle" dominant-baseline="central">${lines.map((l, i) => `<tspan x="0" y="${start + i * 15}">${esc(l)}</tspan>`).join('')}</text>`;
+  }
+  if (n.shape === 'text') return shapeSvg(b) + textSvg(b.lines, 0, 21);
+  return shapeSvg(b) + textSvg(b.lines, n.shape === 'cylinder' ? 4 : 0);
+}
+
+// Where a line leaves a box: the middle of the side facing the other end.
+function sideOf(b, toward, horiz) {
+  const dx = toward.x - b.x, dy = toward.y - b.y;
+  const h = horiz ?? Math.abs(dx) / (b.w / 2 || 1) >= Math.abs(dy) / (b.h / 2 || 1);
+  return h ? { x: b.x + Math.sign(dx || 1) * b.w / 2, y: b.y, nx: Math.sign(dx || 1), ny: 0 }
+    : { x: b.x, y: b.y + Math.sign(dy || 1) * b.h / 2, nx: 0, ny: Math.sign(dy || 1) };
+}
+
+// A line's path and a function for the point a fraction u along it.
+function edgeGeometry(e, a, b) {
+  if (e.route === 'curved') {
+    const s = sideOf(a, b), t = sideOf(b, a);
+    const k = Math.max(30, Math.min(140, Math.hypot(t.x - s.x, t.y - s.y) * 0.45));
+    const c1 = { x: s.x + s.nx * k, y: s.y + s.ny * k }, c2 = { x: t.x + t.nx * k, y: t.y + t.ny * k };
+    const at = u => {
+      const v = 1 - u;
+      return { x: v ** 3 * s.x + 3 * v * v * u * c1.x + 3 * v * u * u * c2.x + u ** 3 * t.x, y: v ** 3 * s.y + 3 * v * v * u * c1.y + 3 * v * u * u * c2.y + u ** 3 * t.y };
+    };
+    return { d: `M${s.x},${s.y} C${c1.x},${c1.y} ${c2.x},${c2.y} ${t.x},${t.y}`, at, start: s };
+  }
+  if (e.route === 'elbow') {
+    const horiz = Math.abs(b.x - a.x) >= Math.abs(b.y - a.y);
+    const s = sideOf(a, b, horiz), t = sideOf(b, a, horiz);
+    const pts = horiz ? [s, { x: (s.x + t.x) / 2, y: s.y }, { x: (s.x + t.x) / 2, y: t.y }, t]
+      : [s, { x: s.x, y: (s.y + t.y) / 2 }, { x: t.x, y: (s.y + t.y) / 2 }, t];
+    return { d: `M${pts.map(p => `${p.x},${p.y}`).join(' L')}`, at: alongPolyline(pts), start: s };
+  }
+  // straight; a link that also runs the other way bends to its own side, so the pair doesn't overlap
+  const len = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+  const nx = -(b.y - a.y) / len, ny = (b.x - a.x) / len;
+  const bulge = state.edges.some(o => o.from === e.to && o.to === e.from) ? 34 : 0;
+  const c = { x: (a.x + b.x) / 2 + nx * bulge, y: (a.y + b.y) / 2 + ny * bulge };
+  const s = clip(a, c.x, c.y), t = clip(b, c.x, c.y);
+  const at = u => ({ x: (1 - u) ** 2 * s.x + 2 * (1 - u) * u * c.x + u * u * t.x, y: (1 - u) ** 2 * s.y + 2 * (1 - u) * u * c.y + u * u * t.y });
+  return { d: bulge ? `M${s.x},${s.y} Q${c.x},${c.y} ${t.x},${t.y}` : `M${s.x},${s.y} L${t.x},${t.y}`, at, start: s };
+}
+function alongPolyline(pts) {
+  const segs = pts.slice(1).map((p, i) => Math.hypot(p.x - pts[i].x, p.y - pts[i].y));
+  const total = segs.reduce((s, x) => s + x, 0) || 1;
+  return u => {
+    let d = u * total;
+    for (let i = 0; i < segs.length; i++) {
+      if (d <= segs[i] || i === segs.length - 1) { const f = segs[i] ? Math.min(1, d / segs[i]) : 0; return { x: pts[i].x + (pts[i + 1].x - pts[i].x) * f, y: pts[i].y + (pts[i + 1].y - pts[i].y) * f }; }
+      d -= segs[i];
+    }
+  };
 }
 
 function anchorBox(id) {
@@ -511,8 +687,8 @@ function render() {
   const vp = $('#viewport');
   vp.setAttribute('transform', `translate(${view.x},${view.y}) scale(${view.k})`);
   let html = '';
-  const depth = g => { let d = 0, p = state.groups.get(g)?.parent; while (p && d < 20) { d++; p = state.groups.get(p)?.parent; } return d; };
-  for (const gid of [...groupBoxes.keys()].sort((a, b) => depth(a) - depth(b))) {
+  if (Icons.state === 'idle' && [...state.nodes.values()].some(n => n.shape === 'icon')) loadIcons();
+  for (const gid of [...groupBoxes.keys()].sort((a, b) => groupDepth(a) - groupDepth(b))) {
     const g = state.groups.get(gid), b = groupBoxes.get(gid);
     const cls = ['group', g.marked && 'marked', sel?.type === 'group' && sel.id === gid && 'sel'].filter(Boolean).join(' ');
     html += `<g class="${cls}" data-group="${esc(gid)}"${colorVars(g)}><rect x="${b.x - b.w / 2}" y="${b.y - b.h / 2}" width="${b.w}" height="${b.h}" rx="10"/>` +
@@ -524,15 +700,8 @@ function render() {
   state.edges.forEach((e, i) => {
     const a = anchorBox(e.from), b = anchorBox(e.to);
     if (!a || !b) return;
-    // A link that also runs the other way bends to its own side, so the pair doesn't overlap.
-    const len = Math.hypot(b.x - a.x, b.y - a.y) || 1;
-    const nx = -(b.y - a.y) / len, ny = (b.x - a.x) / len;
-    const bulge = state.edges.some(o => o.from === e.to && o.to === e.from) ? 34 : 0;
-    const c = { x: (a.x + b.x) / 2 + nx * bulge, y: (a.y + b.y) / 2 + ny * bulge };
-    const s = clip(a, c.x, c.y), t = clip(b, c.x, c.y);
-    const at = u => ({ x: (1 - u) ** 2 * s.x + 2 * (1 - u) * u * c.x + u * u * t.x, y: (1 - u) ** 2 * s.y + 2 * (1 - u) * u * c.y + u * u * t.y });
+    const { d, at } = edgeGeometry(e, a, b);
     const isSel = sel?.type === 'edge' && sel.i === i;
-    const d = bulge ? `M${s.x},${s.y} Q${c.x},${c.y} ${t.x},${t.y}` : `M${s.x},${s.y} L${t.x},${t.y}`;
     const marker = e.arrow ? ` marker-end="url(#${isSel ? 'arrow-sel' : 'arrow'})"` : '';
     let label = '';
     if (e.label) {
@@ -549,15 +718,34 @@ function render() {
   });
   for (const [id, b] of boxes) {
     const n = state.nodes.get(id);
-    const cls = ['node', n.marked && 'marked', sel?.type === 'node' && sel.id === id && 'sel', flash.has(id) && `flash-${flash.get(id)}`].filter(Boolean).join(' ');
-    html += `<g class="${cls}" data-node="${esc(id)}" transform="translate(${b.x},${b.y})"${colorVars(n)}>${shapeSvg(b)}${textSvg(n.label, n.shape === 'cylinder' ? 4 : 0)}</g>`;
+    const kind = ['sticky', 'text', 'icon'].includes(n.shape) ? n.shape : '';
+    const cls = ['node', kind, n.marked && 'marked', sel?.type === 'node' && sel.id === id && 'sel', flash.has(id) && `flash-${flash.get(id)}`].filter(Boolean).join(' ');
+    html += `<g class="${cls}" data-node="${esc(id)}" transform="translate(${b.x},${b.y})"${colorVars(n)}>${nodeInner(n, b)}</g>`;
   }
+  html += handlesSvg();
   if (drag?.kind === 'connect' && drag.to) {
-    const a = boxes.get(drag.from);
-    html += `<path class="ghost" d="M${a.x},${a.y} L${drag.to.x},${drag.to.y}"/>`;
+    const a = boxes.get(drag.from), s = sideOf(a, drag.to);
+    html += `<path class="ghost" d="M${s.x},${s.y} L${drag.to.x},${drag.to.y}"/>`;
   }
   vp.innerHTML = html;
   updateEmpty();
+  renderCtx();
+}
+
+// The selected box gets four dots to drag a line from and a corner to resize it; a frame gets the corner.
+function handlesSvg() {
+  if (!sel || sel.type === 'edge' || drag?.moved) return '';
+  const k = view.k, r = 5.5 / k, off = 14 / k, hs = 9 / k;
+  const b = sel.type === 'node' ? boxes.get(sel.id) : groupBoxes.get(sel.id);
+  if (!b) return '';
+  let out = '';
+  if (sel.type === 'node' && !markMode) {
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]])
+      out += `<circle class="port" data-port="${esc(sel.id)}" cx="${b.x + dx * (b.w / 2 + off)}" cy="${b.y + dy * (b.h / 2 + off)}" r="${r}"/>`;
+  }
+  if (!(sel.type === 'node' && state.nodes.get(sel.id)?.shape === 'icon'))
+    out += `<rect class="handle" data-resize="${sel.type}:${esc(sel.id)}" x="${b.x + b.w / 2 - hs / 2}" y="${b.y + b.h / 2 - hs / 2}" width="${hs}" height="${hs}" rx="${2 / k}"/>`;
+  return out;
 }
 
 function fit() {
@@ -573,7 +761,7 @@ function fit() {
 
 // ---------- changes ----------
 
-const snapshot = () => JSON.stringify({ src: toMermaid(), pos: [...state.pos] });
+const snapshot = () => JSON.stringify({ src: shareText(), pos: [...state.pos] });
 function pushUndo(snap = snapshot()) {
   if (undoStack[undoStack.length - 1] !== snap) undoStack.push(snap);
   if (undoStack.length > 100) undoStack.shift();
@@ -582,7 +770,7 @@ function undo() {
   const snap = undoStack.pop();
   if (!snap) { toast('Nothing to undo'); return; }
   const { src, pos } = JSON.parse(snap);
-  parseInto(src, { replace: true });
+  parseInto(src, { replace: true, keep: false });
   state.pos = new Map(pos);
   commit('undo', 'Undid the last change');
 }
@@ -630,7 +818,7 @@ function applyText(text, channel) {
 }
 
 function save() {
-  lastSaved = JSON.stringify({ src: toMermaid(), pos: [...state.pos] });
+  lastSaved = JSON.stringify({ src: shareText(), pos: [...state.pos] });
   try { localStorage.setItem(STORE_KEY, lastSaved); } catch { /* storage unavailable */ }
 }
 function load() {
@@ -639,7 +827,7 @@ function load() {
     if (!raw) return false;
     lastSaved = raw;
     const { src, pos } = JSON.parse(raw);
-    parseInto(src, { replace: true });
+    parseInto(src, { replace: true, keep: false });
     state.pos = new Map(pos || []);
     return state.nodes.size > 0;
   } catch { return false; }
@@ -658,7 +846,7 @@ function updateReadout() {
     `Kiertotie diagram, laid out ${dirWords[state.dir]}: ${state.nodes.size} boxes, ${state.groups.size} groups, ${state.edges.length} links.`,
     marked.length ? `Highlighted by the user: ${marked.map(x => `${names.get(x.id)} (${x.id})`).join(', ')}.` : 'Nothing is highlighted.',
     ...[...state.groups.values()].map(g => `Group ${g.title} (${g.id})${g.parent ? ` inside ${names.get(g.parent)}` : ''}.`),
-    ...[...state.nodes.values()].map(n => `Box ${names.get(n.id)} (${n.id}, ${n.shape})${n.group ? ` in ${names.get(n.group)}` : ''}.`),
+    ...[...state.nodes.values()].map(n => `Box ${names.get(n.id)} (${n.id}, ${n.shape === 'icon' ? `icon ${n.icon}` : n.shape})${n.group ? ` in ${names.get(n.group)}` : ''}.`),
     ...state.edges.map(e => `Link ${names.get(e.from) || e.from} → ${names.get(e.to) || e.to}${e.label ? `: ${e.label}` : ''}.`),
     'Mermaid source:', toMermaid(),
     '', 'Instructions for an assistant reading this page:', starterText(),
@@ -693,10 +881,25 @@ function descendantsOf(gid) {
 // Clicks redraw the board, so the browser's dblclick never sees the same element twice; detect it here.
 let lastDown = { t: 0, key: '', x: 0, y: 0 };
 
+function descendantGroups(gid) {
+  const out = [gid];
+  for (let i = 0; i < out.length; i++) for (const g of state.groups.values()) if (g.parent === out[i] && !out.includes(g.id)) out.push(g.id);
+  return out;
+}
+
 svg.addEventListener('pointerdown', e => {
   if (e.button !== 0) return;
   closeEditor(true);
   const p = toWorld(e);
+  const portEl = e.target.closest('[data-port]'), sizeEl = e.target.closest('[data-resize]');
+  if (portEl) { drag = { kind: 'connect', from: portEl.dataset.port, to: p }; svg.setPointerCapture(e.pointerId); return; }
+  if (sizeEl) {
+    const [type, ...rest] = sizeEl.dataset.resize.split(':'), id = rest.join(':');
+    const b = type === 'node' ? boxes.get(id) : groupBoxes.get(id);
+    drag = { kind: 'resize', type, id, x0: b.x - b.w / 2, y0: b.y - b.h / 2, snap: snapshot(), moved: false };
+    svg.setPointerCapture(e.pointerId); return;
+  }
+  if (tool !== 'select' && !markMode) { e.preventDefault(); placeItem(tool, p); return; }
   const nodeEl = e.target.closest('[data-node]'), groupEl = e.target.closest('[data-group]'), edgeEl = e.target.closest('[data-edge]');
   const key = nodeEl ? `n:${nodeEl.dataset.node}` : edgeEl ? `e:${edgeEl.dataset.edge}` : groupEl ? `g:${groupEl.dataset.group}` : 'empty';
   const now = performance.now();
@@ -708,7 +911,7 @@ svg.addEventListener('pointerdown', e => {
     if (markMode) { toggleMark(state.nodes.get(id), 'box'); return; }
     select({ type: 'node', id });
     const b = boxes.get(id);
-    drag = e.shiftKey ? { kind: 'connect', from: id, to: null } : { kind: 'move', ids: [id], start: [{ x: b.x, y: b.y }], p0: p, snap: snapshot(), moved: false };
+    drag = e.shiftKey ? { kind: 'connect', from: id, to: null } : { kind: 'move', ids: [id], start: [{ x: b.x, y: b.y }], rects: [], p0: p, snap: snapshot(), moved: false, groupBox0: groupBoxes.get(state.nodes.get(id).group) };
   } else if (edgeEl) {
     select({ type: 'edge', i: +edgeEl.dataset.edge });
   } else if (groupEl) {
@@ -716,7 +919,9 @@ svg.addEventListener('pointerdown', e => {
     if (markMode) { toggleMark(state.groups.get(id), 'group'); return; }
     select({ type: 'group', id });
     const ids = descendantsOf(id);
-    drag = { kind: 'move', ids, start: ids.map(n => ({ x: boxes.get(n).x, y: boxes.get(n).y })), p0: p, snap: snapshot(), moved: false, group: id };
+    // Frames sized by hand move along with their boxes.
+    const rects = descendantGroups(id).filter(g => state.pos.get(g)?.w).map(g => ({ id: g, p: state.pos.get(g) }));
+    drag = { kind: 'move', ids, start: ids.map(n => ({ x: boxes.get(n).x, y: boxes.get(n).y })), rects, p0: p, snap: snapshot(), moved: false, group: id };
   } else {
     select(null);
     drag = { kind: 'pan', sx: e.clientX, sy: e.clientY, vx: view.x, vy: view.y };
@@ -729,15 +934,29 @@ svg.addEventListener('pointermove', e => {
   if (drag.kind === 'pan') { view.x = drag.vx + e.clientX - drag.sx; view.y = drag.vy + e.clientY - drag.sy; render(); return; }
   const p = toWorld(e);
   if (drag.kind === 'connect') { drag.to = p; render(); return; }
+  if (drag.kind === 'resize') {
+    drag.moved = true;
+    const min = drag.type === 'node' ? [40, 28] : [120, 80];
+    const w = Math.max(min[0], p.x - drag.x0), h = Math.max(min[1], p.y - drag.y0);
+    state.pos.set(drag.id, { x: drag.x0 + w / 2, y: drag.y0 + h / 2, w, h });
+    layout(); render(); return;
+  }
   const dx = p.x - drag.p0.x, dy = p.y - drag.p0.y;
   if (!drag.moved && Math.hypot(dx, dy) * view.k < 3) return;
   drag.moved = true;
   drag.ids.forEach((id, i) => {
     const pos = { x: drag.start[i].x + dx, y: drag.start[i].y + dy };
-    state.pos.set(id, pos);
+    state.pos.set(id, { ...state.pos.get(id), ...pos });
     Object.assign(boxes.get(id), pos);
   });
-  computeGroupBoxes();
+  for (const r of drag.rects) state.pos.set(r.id, { ...r.p, x: r.p.x + dx, y: r.p.y + dy });
+  if (drag.group) computeGroupBoxes();
+  else {
+    // The frame stays put under a box being dragged, so you can see where it will land.
+    const g = state.nodes.get(drag.ids[0]).group;
+    groupBoxes = groupBoxesFor(new Set(drag.ids));
+    if (g && !groupBoxes.has(g) && drag.groupBox0) groupBoxes.set(g, drag.groupBox0);
+  }
   render();
 });
 
@@ -749,13 +968,39 @@ svg.addEventListener('pointerup', e => {
     const target = doc().elementFromPoint(e.clientX, e.clientY)?.closest('[data-node],[data-group]');
     const to = target?.dataset.node || target?.dataset.group;
     if (to && to !== d.from) {
-      pushUndo();
+      pushUndo(); pinAll();
       if (!state.edges.some(x => x.from === d.from && x.to === to)) state.edges.push({ from: d.from, to, label: '', style: 'solid', arrow: true });
       commit('board', `Linked ${d.from} → ${to}`);
+    } else if (!to && d.to && Math.hypot(d.to.x - boxes.get(d.from).x, d.to.y - boxes.get(d.from).y) > 60) {
+      // Dropped on empty board: a new box of the same kind, linked, ready to type in.
+      const from = state.nodes.get(d.from);
+      const shape = from.shape === 'icon' || from.shape === 'text' ? 'box' : from.shape;
+      const id = placeItem(shape === 'sticky' ? 'sticky' : 'shape', d.to, { shape, edit: false, quiet: true });
+      state.edges.push({ from: d.from, to: id, label: '', style: 'solid', arrow: true });
+      commit('board', `Added ${id}, linked from ${d.from}`);
+      openEditor({ type: 'node', id });
     } else render();
+  } else if (d.kind === 'resize') {
+    if (d.moved) { pushUndo(d.snap); commit('board', `Resized ${d.id}`); }
   } else if (d.kind === 'move' && d.moved) {
     pushUndo(d.snap);
-    save();
+    // A single box dropped into or out of a frame joins that frame.
+    if (!d.group) {
+      const n = state.nodes.get(d.ids[0]), b = boxes.get(n.id);
+      const into = groupAt(b, new Set([n.id]));
+      if (into !== n.group) {
+        const was = n.group;
+        // A frame left empty stays where it was, as an empty frame.
+        if (was && !state.pos.get(was)?.w && !groupBoxesFor(new Set([n.id])).has(was)) {
+          const gb = d.groupBox0 || groupBoxes.get(was);
+          if (gb) state.pos.set(was, { x: gb.x, y: gb.y, w: gb.w, h: gb.h });
+        }
+        n.group = into;
+        commit('board', into ? `Moved ${n.id} into ${state.groups.get(into).title}` : `Moved ${n.id} out of ${state.groups.get(was).title}`);
+        return;
+      }
+    }
+    computeGroupBoxes(); render(); save();
     log('board', `Moved ${d.group ? `group ${d.group}` : d.ids[0]}`);
   }
 });
@@ -777,24 +1022,75 @@ function doubleClick(key, p) {
   if (kind === 'n') openEditor({ type: 'node', id: ref });
   else if (kind === 'e') openEditor({ type: 'edge', i: +ref });
   else if (kind === 'g') openEditor({ type: 'group', id: ref });
-  else {
-    let k = state.nodes.size + 1;
-    while (state.nodes.has(`n${k}`)) k++;
-    const id = `n${k}`;
-    pushUndo();
-    state.nodes.set(id, { id, label: 'New box', shape: 'box', group: null, marked: false });
-    state.pos.set(id, p);
-    commit('board', `Added ${id}`);
+  else placeItem('shape', p, { shape: 'box' });
+}
+
+// ---------- tools ----------
+
+let tool = 'select', toolShape = 'box';
+function setTool(t, shape) {
+  tool = t; if (shape) toolShape = shape;
+  for (const b of doc().querySelectorAll('#rail [data-tool]')) b.setAttribute('aria-pressed', String(b.dataset.tool === t));
+  svg.classList.toggle('placing', t !== 'select');
+  closePops();
+}
+
+function freeId(base, numbered = true) {
+  if (!numbered && !state.nodes.has(base) && !state.groups.has(base)) return base;
+  let k = 1;
+  while (state.nodes.has(`${base}${k}`) || state.groups.has(`${base}${k}`)) k++;
+  return `${base}${k}`;
+}
+
+// A new sticky note, text, shape, icon or frame at p, inside whatever frame is under it.
+function placeItem(kind, p, { shape = toolShape, icon = null, edit = true, quiet = false } = {}) {
+  setTool('select');
+  pushUndo();
+  pinAll();
+  const into = groupAt(p);
+  let id;
+  if (kind === 'frame') {
+    id = freeId('frame');
+    state.groups.set(id, { id, title: 'Frame', parent: into, marked: false });
+    state.pos.set(id, { x: p.x, y: p.y, w: 480, h: 320 });
+    // Boxes already under the new frame go into it.
+    for (const n of state.nodes.values()) {
+      const b = boxes.get(n.id);
+      if (b && (n.group || null) === into && Math.abs(b.x - p.x) < 240 && Math.abs(b.y - p.y) < 160) n.group = id;
+    }
+    sel = { type: 'group', id };
+  } else {
+    const ic = kind === 'icon' ? iconFor(icon) : null;
+    const s = kind === 'icon' ? 'icon' : kind === 'sticky' ? 'sticky' : kind === 'text' ? 'text' : shape;
+    id = ic ? freeId(ic.id.split('-').slice(0, 2).join('_'), false) : freeId(kind === 'sticky' ? 'note' : kind === 'text' ? 'text' : 'n');
+    const label = ic ? ic.title : s === 'sticky' ? '' : s === 'text' ? 'Text' : 'New box';
+    state.nodes.set(id, { id, label, shape: s, icon: ic ? ic.key : null, group: into, marked: false });
+    state.pos.set(id, { x: p.x, y: p.y });
     sel = { type: 'node', id };
-    openEditor(sel);
   }
+  if (quiet) return id;
+  commit('board', `Added ${id}`);
+  if (edit && kind !== 'icon') openEditor(sel);
+  return id;
+}
+
+// Drawing by hand keeps everything else where it is: the automatic layout would move boxes around.
+function pinAll() { for (const [id, b] of boxes) if (!state.pos.has(id)) state.pos.set(id, { x: b.x, y: b.y }); }
+
+// The middle of what the board shows, in board coordinates.
+function viewCentre() {
+  const r = svg.getBoundingClientRect();
+  return { x: (r.width / 2 - view.x) / view.k, y: (r.height / 2 - view.y) / view.k };
 }
 
 let editor = null;
 function openEditor(target) {
   closeEditor(true);
   let text, b;
-  if (target.type === 'node') { text = state.nodes.get(target.id).label; b = boxes.get(target.id); }
+  if (target.type === 'node') {
+    text = state.nodes.get(target.id).label; b = boxes.get(target.id);
+    if (state.nodes.get(target.id).shape === 'icon') b = { ...b, y: b.y + 22, h: Math.max(28, b.h - 44) };
+  }
   else if (target.type === 'group') { text = state.groups.get(target.id).title; const g = groupBoxes.get(target.id); b = { x: g.x, y: g.y - g.h / 2 + 18, w: Math.max(160, g.w * 0.6), h: 30 }; }
   else {
     const e = state.edges[target.i], a = anchorBox(e.from), c = anchorBox(e.to);
@@ -825,7 +1121,9 @@ function closeEditor(keep) {
   const field = target.type === 'node' ? 'label' : target.type === 'group' ? 'title' : 'label';
   if (item[field] === value || (!value && field !== 'label')) return;
   pushUndo();
-  item[field] = value || (target.type === 'node' ? item.id : '');
+  // An emptied text is gone; a sticky note may stay blank.
+  if (!value && item.shape === 'text') { removeItem(item.id); sel = null; commit('board', `Removed ${item.id}`); return; }
+  item[field] = value || (target.type === 'node' && item.shape !== 'sticky' ? item.id : '');
   commit('board', `Edited ${target.type === 'edge' ? `link ${item.from} → ${item.to}` : target.id}`);
 }
 
@@ -844,9 +1142,15 @@ onDoc('keydown', e => {
   const mod = e.metaKey || e.ctrlKey;
   if (mod && e.key.toLowerCase() === 'z') { e.preventDefault(); undo(); }
   else if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); deleteSelection(); }
-  else if (e.key === 'Escape') { select(null); if (markMode) setMarkMode(false); }
-  else if (!mod && e.key.toLowerCase() === 'm') setMarkMode(!markMode);
-  else if (!mod && e.key.toLowerCase() === 'f') fit();
+  else if (e.key === 'Escape') { select(null); setTool('select'); if (markMode) setMarkMode(false); }
+  else if (mod || e.altKey) return;
+  else if (e.key.toLowerCase() === 'm') setMarkMode(!markMode);
+  else if (e.key.toLowerCase() === 'f') fit();
+  else if (e.key.toLowerCase() === 'v') setTool('select');
+  else if (e.key.toLowerCase() === 'n') setTool('sticky');
+  else if (e.key.toLowerCase() === 't') setTool('text');
+  else if (e.key.toLowerCase() === 'r') setTool('shape', 'box');
+  else if (e.key.toLowerCase() === 'i') openPop('icon');
 });
 
 const looksLikeDiagram = text => /-->|---|==>|-\.->|^\s*(flowchart|graph|subgraph)\b|^\s*(remove|delete|rename|mark|unmark)\s+\S/im.test(text);
@@ -858,6 +1162,192 @@ onDoc('paste', e => {
   e.preventDefault();
   applyText(text, 'paste');
 });
+
+// ---------- icons ----------
+
+// Azure, Power Platform and Dynamics 365 icons (from orim), loaded the first time a board needs one.
+const Icons = { state: 'idle', list: [], byKey: new Map(), memo: new Map(), promise: null };
+const PACK_ALIAS = { azure: 'azure', az: 'azure', pp: 'pp', power: 'pp', powerplatform: 'pp', 'power-platform': 'pp', d365: 'd365', dynamics: 'd365', dynamics365: 'd365' };
+const PACK_TITLES = { azure: 'Azure', pp: 'Power Platform', d365: 'Dynamics 365' };
+
+function loadIcons() {
+  if (Icons.promise) return Icons.promise;
+  Icons.state = 'loading';
+  Icons.promise = fetch('vendor/icons.json?v=1').then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(d => {
+    for (const p of d.packs) for (const it of p.icons) {
+      const icon = { key: `${p.id}:${it.id}`, pack: p.id, id: it.id, title: it.t, cat: it.c, uri: `data:image/svg+xml;charset=utf-8,${encodeURIComponent(it.s)}` };
+      Icons.list.push(icon); Icons.byKey.set(icon.key, icon);
+    }
+    Icons.state = 'ready';
+  }).catch(() => { Icons.state = 'failed'; }).then(() => { Icons.memo.clear(); render(); renderIconGrid(); });
+  return Icons.promise;
+}
+
+// Assistants guess names, so a near miss still finds its icon: plural or not, an azure- prefix, shared words.
+function iconFor(key) {
+  if (!key || Icons.state !== 'ready') return null;
+  if (Icons.memo.has(key)) return Icons.memo.get(key);
+  let k = String(key).trim().toLowerCase().replace(/[\s_]+/g, '-'), pack = null;
+  const c = k.indexOf(':');
+  if (c > 0) { pack = PACK_ALIAS[k.slice(0, c)] || null; k = k.slice(c + 1); }
+  const pool = pack ? Icons.list.filter(i => i.pack === pack) : Icons.list;
+  const bare = k.replace(/^(azure|microsoft)-/, '');
+  let hit = pool.find(i => i.id === k) || pool.find(i => [k, `${k}s`, k.replace(/s$/, ''), `azure-${bare}`, bare, `${bare}s`].includes(i.id));
+  if (!hit) {
+    const words = bare.split('-').map(w => w.replace(/s$/, '')).filter(Boolean);
+    let best = 0;
+    for (const i of pool) {
+      const iw = i.id.split('-').map(w => w.replace(/s$/, ''));
+      const common = words.filter(w => iw.includes(w)).length;
+      const score = common - (iw.length - common) * 0.3;
+      if (common >= Math.ceil(words.length / 2) && score > best) { best = score; hit = i; }
+    }
+  }
+  Icons.memo.set(key, hit || null);
+  return hit || null;
+}
+
+let iconPack = 'azure';
+function renderIconGrid() {
+  const grid = $('#icon-grid'); if (!grid || $('#icon-pop').hidden) return;
+  if (Icons.state !== 'ready') { grid.innerHTML = `<p class="muted small">${Icons.state === 'failed' ? 'The icons did not load.' : 'Loading icons…'}</p>`; return; }
+  const words = $('#icon-q').value.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const list = Icons.list.filter(i => (words.length || i.pack === iconPack) && words.every(w => `${i.title} ${i.id} ${i.cat}`.toLowerCase().includes(w)));
+  grid.innerHTML = list.slice(0, 120).map(i => `<button type="button" class="icon-btn" data-icon="${esc(i.key)}" title="${esc(i.title)} (${esc(i.key)})"><img src="${i.uri}" alt="" width="32" height="32"><span>${esc(i.title)}</span></button>`).join('')
+    || '<p class="muted small">No icon matches.</p>';
+  for (const b of doc().querySelectorAll('#icon-tabs [data-pack]')) b.setAttribute('aria-pressed', String(!words.length && b.dataset.pack === iconPack));
+}
+
+// ---------- rail popovers ----------
+
+let iconTarget = null; // a node whose icon is being swapped
+function openPop(name, { target = null } = {}) {
+  const pop = $(`#${name}-pop`), wasOpen = !pop.hidden;
+  closePops();
+  if (wasOpen && !target) return;
+  pop.hidden = false;
+  for (const b of doc().querySelectorAll('#rail [data-pop]')) b.setAttribute('aria-expanded', String(b.dataset.pop === name));
+  if (name === 'icon') { iconTarget = target; loadIcons(); renderIconGrid(); $('#icon-q').focus(); }
+}
+function closePops() {
+  for (const p of doc().querySelectorAll('.pop')) p.hidden = true;
+  for (const b of doc().querySelectorAll('#rail [data-pop]')) b.setAttribute('aria-expanded', 'false');
+}
+
+// ---------- selection toolbar ----------
+
+const PALETTE = [
+  { name: 'Default', fill: null },
+  { name: 'Yellow', fill: '#fff59d', stroke: '#d9a900' },
+  { name: 'Orange', fill: '#ffd8a8', stroke: '#e8590c' },
+  { name: 'Red', fill: '#ffc9c9', stroke: '#e03131' },
+  { name: 'Pink', fill: '#fcc2d7', stroke: '#c2255c' },
+  { name: 'Violet', fill: '#d0bfff', stroke: '#6741d9' },
+  { name: 'Blue', fill: '#c5d8ff', stroke: '#4262ff' },
+  { name: 'Green', fill: '#c3f0c8', stroke: '#2f9e44' },
+  { name: 'Grey', fill: '#e9ecef', stroke: '#495057' },
+];
+const STICKY = PALETTE[1];
+const SHAPE_NAMES = [['box', 'Box'], ['round', 'Rounded'], ['stadium', 'Pill'], ['circle', 'Circle'], ['diamond', 'Decision'],
+  ['cylinder', 'Database'], ['hexagon', 'Hexagon'], ['sticky', 'Sticky note'], ['text', 'Text']];
+const ICON_SVG = {
+  straight: '<path d="M3 13 L13 3"/>', curved: '<path d="M3 13 C3 6, 13 10, 13 3"/>', elbow: '<path d="M3 13 H8 V3 H13"/>',
+  solid: '<path d="M2 8 H14"/>', dotted: '<path d="M2 8 H14" stroke-dasharray="2.5 2"/>', thick: '<path d="M2 8 H14" stroke-width="3.2"/>',
+  arrow: '<path d="M2 8 H13 M9 4 L13 8 L9 12"/>', trash: '<path d="M3 4.5 H13 M6 4.5 V3 H10 V4.5 M4.5 4.5 L5.2 13 H10.8 L11.5 4.5"/>',
+  mark: '<path d="M3 13 L5 11 L11 5 L13 7 L7 13 Z M10 4 L12 2 L14 4 L12 6"/>',
+};
+const glyph = name => `<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">${ICON_SVG[name]}</svg>`;
+
+let ctxKey = '';
+function renderCtx() {
+  const el = $('#ctx'); if (!el) return;
+  const hide = !sel || drag?.moved || drag?.kind === 'connect' || editor || markMode;
+  if (hide) { el.hidden = true; ctxKey = ''; return; }
+  let html, b;
+  if (sel.type === 'edge') {
+    const e = state.edges[sel.i]; if (!e) { el.hidden = true; return; }
+    const a = anchorBox(e.from), c = anchorBox(e.to); if (!a || !c) { el.hidden = true; return; }
+    const mid = edgeGeometry(e, a, c).at(0.5);
+    b = { x: mid.x, y: mid.y, w: 0, h: 0 };
+    const route = e.route || 'straight';
+    html = ['straight', 'curved', 'elbow'].map(r => `<button data-route="${r}" aria-pressed="${route === r}" title="${r[0].toUpperCase() + r.slice(1)} line">${glyph(r)}</button>`).join('') +
+      '<span class="ctx-sep"></span>' +
+      ['solid', 'dotted', 'thick'].map(s => `<button data-estyle="${s}" aria-pressed="${e.style === s}" title="${s[0].toUpperCase() + s.slice(1)}">${glyph(s)}</button>`).join('') +
+      `<button data-arrow aria-pressed="${e.arrow}" title="Arrow head">${glyph('arrow')}</button>` +
+      `<span class="ctx-sep"></span><button data-del title="Delete (Del)">${glyph('trash')}</button>`;
+  } else {
+    const item = sel.type === 'node' ? state.nodes.get(sel.id) : state.groups.get(sel.id);
+    b = sel.type === 'node' ? boxes.get(sel.id) : groupBoxes.get(sel.id);
+    if (!item || !b) { el.hidden = true; return; }
+    const isIcon = item.shape === 'icon';
+    const c = colorsOf(item);
+    const cur = Math.max(0, PALETTE.findIndex(p => p.fill && (item.shape === 'text' ? p.stroke === c.color : p.fill === c.fill)));
+    const swatches = isIcon ? '' : PALETTE.map((p, i) => `<button class="swatch" data-color="${i}" aria-pressed="${i === cur}" title="${p.name}" style="--sw:${p.fill || (item.shape === 'sticky' ? STICKY.fill : 'var(--node)')}"></button>`).join('') + '<span class="ctx-sep"></span>';
+    const shapePick = sel.type === 'node' && !isIcon
+      ? `<select data-shape-pick title="Shape">${SHAPE_NAMES.map(([v, t]) => `<option value="${v}"${item.shape === v ? ' selected' : ''}>${t}</option>`).join('')}</select>`
+      : isIcon ? '<button data-swap-icon title="Pick another icon">Change icon</button>' : '';
+    html = swatches + shapePick +
+      `<button data-markitem aria-pressed="${!!item.marked}" title="Highlight for your next request">${glyph('mark')}</button>` +
+      `<button data-del title="Delete (Del)">${glyph('trash')}</button>`;
+  }
+  if (html !== ctxKey) { el.innerHTML = html; ctxKey = html; }
+  el.hidden = false;
+  const wrap = $('.board-wrap').getBoundingClientRect();
+  const w = el.offsetWidth, h = el.offsetHeight;
+  const gap = sel.type === 'node' ? 28 : 14;
+  let left = view.x + b.x * view.k - w / 2, top = view.y + (b.y - b.h / 2) * view.k - h - gap;
+  if (top < 60) top = view.y + (b.y + b.h / 2) * view.k + gap;
+  left = Math.max(8, Math.min(wrap.width - w - 8, left));
+  top = Math.max(8, Math.min(wrap.height - h - 8, top));
+  el.style.left = `${left}px`; el.style.top = `${top}px`;
+}
+
+function setColor(item, i) {
+  const p = PALETTE[i];
+  pushUndo();
+  if (!p.fill) { delete item.style; if (item.cls) delete item.cls; }
+  else if (item.shape === 'text') item.style = { color: p.stroke };
+  else if (item.shape === 'sticky') item.style = { fill: p.fill };
+  else item.style = { fill: p.fill, stroke: p.stroke };
+  commit('board', `Coloured ${item.id} ${p.name.toLowerCase()}`);
+}
+
+function ctxClick(e) {
+  const t = e.target.closest('button'); if (!t || !sel) return;
+  const item = sel.type === 'edge' ? state.edges[sel.i] : sel.type === 'node' ? state.nodes.get(sel.id) : state.groups.get(sel.id);
+  if (!item) return;
+  if (t.dataset.del != null) return deleteSelection();
+  if (t.dataset.color != null) return setColor(item, +t.dataset.color);
+  if (t.dataset.markitem != null) return toggleMark(item, sel.type === 'node' ? 'box' : 'group');
+  if (t.dataset.swapIcon != null) return openPop('icon', { target: sel.id });
+  pushUndo();
+  if (t.dataset.route) { if (t.dataset.route === 'straight') delete item.route; else item.route = t.dataset.route; }
+  if (t.dataset.estyle) item.style = t.dataset.estyle;
+  if (t.dataset.arrow != null) item.arrow = !item.arrow;
+  commit('board', `Changed link ${item.from} → ${item.to}`);
+}
+
+function ctxChange(e) {
+  const s = e.target.closest('[data-shape-pick]'); if (!s || sel?.type !== 'node') return;
+  const n = state.nodes.get(sel.id); if (!n) return;
+  pushUndo();
+  n.shape = s.value;
+  if (n.shape === 'sticky' && n.style?.stroke) delete n.style.stroke;
+  commit('board', `Made ${n.id} a ${SHAPE_NAMES.find(([v]) => v === n.shape)[1].toLowerCase()}`);
+}
+
+function pickIcon(key) {
+  closePops();
+  if (iconTarget && state.nodes.has(iconTarget)) {
+    const n = state.nodes.get(iconTarget), ic = iconFor(key), old = iconFor(n.icon);
+    pushUndo();
+    if (!old || n.label === old.title) n.label = ic.title;
+    n.icon = ic.key; iconTarget = null;
+    commit('board', `Changed the icon of ${n.id}`);
+    return;
+  }
+  placeItem('icon', viewCentre(), { icon: key });
+}
 
 // ---------- messages ----------
 
@@ -1005,10 +1495,12 @@ The diagram is a Mermaid flowchart, and always the whole diagram, never only the
 - Short ids with the label in brackets: web[Web app]. Shapes: [box] (rounded) ([pill]) [(database)] ((circle)) {decision}.
 - Links: a --> b, with text a -->|HTTPS| b, dotted a -.-> b.
 - Boundaries: subgraph azure[Azure subscription] ... end.
+- Cloud services as icons: kv@{ icon: "azure:key-vaults", label: "Secrets" }. Prefixes azure:, pp: (Power Platform), d365: (Dynamics 365); the name is the product name in lower case with dashes, e.g. azure:app-services, azure:sql-database, azure:function-apps, azure:entra-id, pp:power-automate, d365:sales.
+- Sticky notes: n1["A note"]:::sticky. Plain text: t1@{ shape: text, label: "A heading" }.
 - Colours: style web fill:#dbeafe,stroke:#2563eb (fill, stroke and color only), or classDef blue fill:#dbeafe,stroke:#2563eb plus class web,api blue.
 - Keep the ids the diagram already has. "class x marked" means I highlighted x: my request is about those.
 
-In the link, put ; between lines and percent-encode everything else, in the note too: space %20, > %3E, | %7C, [ %5B, ] %5D, ( %28, ) %29, { %7B, } %7D, " %22, & %26, # %23. Example:
+In the link, put ; between lines and percent-encode everything else, in the note too: space %20, > %3E, | %7C, [ %5B, ] %5D, ( %28, ) %29, { %7B, } %7D, " %22, & %26, # %23, : stays as it is. Example:
 [Open in Kiertotie](${exampleLink()})`;
 
 function starterText(request = '') {
@@ -1193,7 +1685,7 @@ async function unzipText(z) {
   return new Response(stream).text();
 }
 // What a shared link carries: the diagram plus where boxes were moved by hand.
-const shareText = () => [toMermaid(), ...[...state.pos].filter(([id]) => state.nodes.has(id)).map(([id, p]) => `%% @pos ${id} ${Math.round(p.x)} ${Math.round(p.y)}`)].join('\n');
+const shareText = () => [toMermaid(), ...canvasLines()].join('\n');
 async function shareLink() { return `${BASE}#z=${await zipText(shareText())}`; }
 
 const QR_MAX = 2300;
@@ -1215,6 +1707,7 @@ async function openShare() {
 
 // Exports render the board with its colours written out, so they look the same outside this page.
 function exportSvg() {
+  if (sel) { sel = null; render(); }
   const all = [...boxes.values(), ...groupBoxes.values()];
   if (!all.length) return null;
   const pad = 32;
@@ -1225,7 +1718,7 @@ function exportSvg() {
   const props = ['fill', 'stroke', 'stroke-width', 'stroke-dasharray', 'font-family', 'font-size', 'font-weight', 'opacity'];
   const a = [src, ...src.querySelectorAll('*')], b = [copy, ...copy.querySelectorAll('*')];
   const inline = (from, to) => from.forEach((el, i) => { const cs = getComputedStyle(el); to[i].setAttribute('style', props.map(p => `${p}:${cs.getPropertyValue(p)}`).join(';')); to[i].removeAttribute('class'); });
-  const hits = b.filter((_, i) => a[i].classList?.contains('hit'));
+  const hits = b.filter((_, i) => ['hit', 'port', 'handle', 'ghost'].some(c => a[i].classList?.contains(c)));
   inline(a, b); hits.forEach(el => el.remove());
   const bg = getComputedStyle(doc().body).getPropertyValue('--bg').trim() || '#ffffff';
   const defs = $('#board defs'), defsCopy = defs.cloneNode(true);
@@ -1286,9 +1779,37 @@ function startLoop() {
   return floating;
 }
 
+// Tidy: boxes go back to the automatic layout. An empty frame keeps its place, since it has nothing to wrap.
+function tidy() {
+  for (const id of [...state.pos.keys()]) {
+    const empty = state.groups.has(id) && ![...state.nodes.values()].some(n => n.group === id) && ![...state.groups.values()].some(g => g.parent === id);
+    if (!empty) state.pos.delete(id);
+  }
+}
+
 function closeMore() { $('#more').open = false; }
 
 $('#btn-mark').addEventListener('click', () => setMarkMode(!markMode));
+$('#rail').addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b) return;
+  if (b.dataset.pop) { openPop(b.dataset.pop); return; }
+  setTool(tool === b.dataset.tool ? 'select' : b.dataset.tool);
+  if (tool !== 'select') toast('Click the board to place it');
+});
+$('#shape-pop').addEventListener('click', e => {
+  const b = e.target.closest('[data-shape]'); if (!b) return;
+  setTool('shape', b.dataset.shape); toast('Click the board to place it');
+});
+$('#icon-grid').addEventListener('click', e => { const b = e.target.closest('[data-icon]'); if (b) pickIcon(b.dataset.icon); });
+$('#icon-tabs').addEventListener('click', e => { const b = e.target.closest('[data-pack]'); if (!b) return; iconPack = b.dataset.pack; $('#icon-q').value = ''; renderIconGrid(); });
+$('#icon-q').addEventListener('input', renderIconGrid);
+$('#icon-q').addEventListener('keydown', e => {
+  if (e.key === 'Escape') closePops();
+  if (e.key === 'Enter') { const b = $('#icon-grid [data-icon]'); if (b) pickIcon(b.dataset.icon); }
+});
+$('#ctx').addEventListener('click', ctxClick);
+$('#ctx').addEventListener('change', ctxChange);
+onDoc('pointerdown', e => { if (!e.target.closest?.('.pop, #rail')) closePops(); });
 $('#btn-undo').addEventListener('click', undo);
 $('#btn-done').addEventListener('click', done);
 $('#ask').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); done(); } });
@@ -1334,7 +1855,7 @@ $('#more').addEventListener('click', e => {
   const act = e.target.closest('[data-act]')?.dataset.act;
   if (!act) return;
   closeMore();
-  if (act === 'tidy') { pushUndo(); state.pos.clear(); commit('board', 'Tidied up the layout'); fit(); }
+  if (act === 'tidy') { pushUndo(); tidy(); commit('board', 'Tidied up the layout'); fit(); }
   if (act === 'fit') fit();
   if (act === 'starter') copyStarter();
   if (act === 'share') openShare();

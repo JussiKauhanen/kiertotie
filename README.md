@@ -35,6 +35,21 @@ Keep the Kiertotie tab open (in the background is fine), because closing it clos
 - The diagram is kept in the browser. Open board tabs update each other live.
 - **More** holds Tidy up, Fit, Copy starter, Show source and activity (the Mermaid editor and a log of changes), and Start a new diagram.
 
+## Drawing by hand
+
+The rail on the left adds things; click a tool, then click the board.
+- **Sticky note** (N), **Text** (T), **Shapes** (R): box, rounded, pill, circle, decision, database and hexagon.
+- **Frame:** a group you can drop boxes into. Drag a box in or out of it to change its group. Boxes already under a new frame join it.
+- **Icons** (I): the Azure, Power Platform and Dynamics 365 icons from orim, with search.
+
+Select something to get its toolbar:
+- **Boxes and frames:** colour, shape, highlight and delete.
+- **Lines:** straight, curved or elbow, solid, dotted or thick, and the arrow head.
+
+A selected box has four dots: drag one onto another box to link them, or onto empty board for a new linked box. The corner square resizes boxes and frames, and the text wraps to fit.
+
+In Mermaid, icons are `kv@{ icon: "azure:key-vaults", label: "Secrets" }`, text is `t1@{ shape: text, label: "…" }` and sticky notes are `n1["…"]:::sticky`. The assistant's instructions teach it all three. When an assistant gets an icon name slightly wrong, the board picks the closest match, for example `azure:key-vault` finds `azure:key-vaults`. Positions, sizes and line routes are saved as `%% @pos` and `%% @route` lines, which Mermaid ignores.
+
 ## Share and export
 
 **More** has these:
@@ -63,6 +78,8 @@ The browser remembers where you last put the floating board. **Reset its size an
 - `index.html`: toolbar, start screen, banner and the hidden panel
 - `style.css`: light and dark themes
 - `app.js`: Mermaid flowchart subset parser and writer, layered layout with group bands, SVG board and editing, the link and Done loop, and the starter text
+- `vendor/icons.json`: the icon pack, loaded the first time a board needs an icon. See `THIRD_PARTY_NOTICES.md`.
+- `vendor/qrcode.js`: the QR code generator
 
 ## Releasing
 

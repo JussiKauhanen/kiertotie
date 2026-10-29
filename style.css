@@ -280,3 +280,60 @@ body.floating .composer { bottom: 6px; width: calc(100% - 12px); }
 .share-row { display: flex; gap: 8px; margin: 12px 0 4px; }
 .share-row input { flex: 1; min-width: 0; font: 12.5px ui-monospace, Menlo, monospace; color: var(--text); background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 8px; }
 .share-qr svg { width: 220px; height: 220px; display: block; margin: 8px auto 12px; border-radius: 8px; }
+
+/* ---------- tools: the rail, its popovers and the selection toolbar ---------- */
+.rail { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); z-index: 16; display: flex; flex-direction: column; gap: 2px;
+  padding: 4px; background: var(--surface); border-radius: 10px; box-shadow: var(--shadow); }
+.rail button { width: 38px; height: 38px; padding: 0; display: grid; place-items: center; border: 0; background: none; border-radius: 7px; }
+.rail button:hover { background: var(--accent-soft); }
+.rail button[aria-pressed="true"], .rail button[aria-expanded="true"] { background: var(--accent-soft); color: var(--accent); }
+.rail svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linejoin: round; stroke-linecap: round; }
+.rail [data-tool="select"] svg { fill: currentColor; stroke: none; }
+.pop { position: absolute; left: 60px; top: 50%; transform: translateY(-50%); z-index: 17; background: var(--surface); border-radius: 10px; box-shadow: var(--shadow), 0 10px 30px rgba(0, 0, 0, .12); padding: 6px; }
+.shape-pop { display: grid; grid-template-columns: repeat(4, 44px); gap: 2px; }
+.shape-pop button { height: 36px; padding: 0; border: 0; background: none; display: grid; place-items: center; }
+.shape-pop button:hover { background: var(--accent-soft); }
+.shape-pop svg { width: 28px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.5; }
+.icon-pop { width: min(340px, calc(100% - 72px)); top: 10px; bottom: 10px; transform: none; display: flex; flex-direction: column; gap: 6px; padding: 10px; }
+.icon-pop[hidden] { display: none; }
+.icon-pop input { font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 7px 10px; }
+.icon-tabs { display: flex; gap: 4px; flex-wrap: wrap; }
+.icon-tabs button { padding: 3px 9px; font-size: 12px; border-radius: 99px; }
+.icon-tabs button[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+.icon-grid { flex: 1; overflow-y: auto; display: grid; grid-template-columns: repeat(auto-fill, minmax(72px, 1fr)); gap: 4px; align-content: start; }
+.icon-btn { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 6px 2px; border: 0; background: none; white-space: normal; font-size: 10.5px; line-height: 1.2; color: var(--muted); }
+.icon-btn:hover { background: var(--accent-soft); color: var(--text); }
+.icon-btn span { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; text-align: center; }
+.ctx { position: absolute; z-index: 14; display: flex; align-items: center; gap: 2px; padding: 4px; background: var(--surface); border-radius: 10px; box-shadow: var(--shadow), 0 6px 20px rgba(0, 0, 0, .1); }
+.ctx button { height: 30px; min-width: 30px; padding: 0 7px; display: grid; place-items: center; border: 0; background: none; border-radius: 6px; font-size: 12.5px; }
+.ctx button:hover { background: var(--accent-soft); }
+.ctx button[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent); }
+.ctx button[data-markitem][aria-pressed="true"] { background: var(--mark); color: var(--text); }
+.ctx svg { fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.ctx .swatch { min-width: 0; width: 20px; height: 20px; padding: 0; border-radius: 50%; background: var(--sw); box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .15); margin: 0 1px; }
+.ctx .swatch[aria-pressed="true"] { box-shadow: 0 0 0 2px var(--surface), 0 0 0 3.5px var(--accent); background: var(--sw); }
+.ctx-sep { width: 1px; align-self: stretch; background: var(--border); margin: 3px 4px; }
+.ctx select { font: inherit; font-size: 12.5px; color: var(--text); background: none; border: 0; border-radius: 6px; padding: 5px 4px; cursor: pointer; }
+.ctx select:hover { background: var(--accent-soft); }
+#board.placing { cursor: crosshair; }
+body.floating .rail { left: 6px; }
+body.floating .pop { left: 54px; }
+body.floating .icon-pop { width: calc(100% - 64px); }
+
+/* sticky notes, text, icons */
+.node.sticky .node-shape { fill: var(--nf, #fff59d); stroke: none; filter: drop-shadow(0 2px 4px rgba(16, 24, 40, .18)); }
+.node.sticky text { fill: var(--nt, #1a1a1a); }
+.node.sticky.sel .node-shape { stroke: var(--accent); stroke-width: 2; }
+.node.text .node-shape, .node.icon .node-shape { fill: transparent; stroke: none; filter: none; }
+.node.text text { font-size: 16px; font-weight: 600; }
+.node.text.sel .node-shape, .node.icon.sel .node-shape { stroke: var(--accent); stroke-width: 1.5; stroke-dasharray: 4 3; }
+.node.icon text.icon-label { font-size: 12px; font-weight: 500; fill: var(--nt, var(--text)); }
+.node.icon.marked .node-shape { fill: var(--mark); stroke: var(--mark-stroke); stroke-dasharray: none; }
+.icon-missing { fill: var(--accent-soft); stroke: var(--border); }
+.node text.icon-missing-q { fill: var(--muted); font-size: 18px; }
+.port { fill: var(--surface); stroke: var(--accent); stroke-width: 1.6; cursor: crosshair; vector-effect: non-scaling-stroke; }
+.port:hover { fill: var(--accent); }
+.handle { fill: var(--surface); stroke: var(--accent); stroke-width: 1.6; cursor: nwse-resize; vector-effect: non-scaling-stroke; }
+.edge path.line { stroke-linejoin: round; }
+.icon-pop { top: 62px; }
+body.floating .icon-pop { top: 52px; bottom: 6px; }
