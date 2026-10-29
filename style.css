@@ -148,6 +148,11 @@ body.floating .bar { padding: 6px 10px; }
 .start #btn-start { width: 100%; margin-top: 4px; }
 .start #start-help { margin: 8px 0 6px; }
 
+a.btn-link { display: block; text-align: center; text-decoration: none; padding: 10px 18px; border-radius: 8px; cursor: pointer; }
+.row-links { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; }
+.row-links a { color: var(--accent); font-weight: 600; cursor: pointer; }
+kbd { font: 600 12px var(--font); border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 5px; padding: 1px 6px; background: var(--bg); }
+
 /* composer: the next request, at the bottom of the board */
 .composer { display: flex; gap: 8px; padding: 10px 12px; background: var(--surface); border-top: 1px solid var(--border); }
 .composer[hidden] { display: none; }

@@ -59,9 +59,22 @@
       </fieldset>
       <label for="first">What should it draw? <span class="muted">(optional)</span></label>
       <textarea id="first" rows="3" placeholder="e.g. how an AD group grants access to an Azure web app"></textarea>
-      <button id="btn-start" class="big"></button>
+      <a id="btn-start" class="big btn-link" target="kiertotie-chat" role="button"></a>
       <p id="start-help" class="muted small"></p>
       <button id="start-sample" class="link">or look at a sample first</button>
+    </div>
+
+    <div id="waiting" class="start" hidden>
+      <h1>Waiting for <span class="ai-name"></span></h1>
+      <ol>
+        <li>In <span class="ai-name"></span>, press <kbd class="paste-key"></kbd> to paste the instructions, and send.</li>
+        <li>Click <strong>Open in Kiertotie</strong> in its answer. The diagram appears here.</li>
+      </ol>
+      <div class="row-links">
+        <a id="wait-open" target="kiertotie-chat">Open <span class="ai-name"></span></a>
+        <button id="wait-copy" class="link">Copy the instructions again</button>
+        <button id="wait-back" class="link">Start over</button>
+      </div>
     </div>
 
     <p class="hint">Drag to move · Shift-drag to connect · Double-click to edit · Delete removes</p>

@@ -921,20 +921,16 @@ function paintAi() {
   $('#ai-chips').innerHTML = AIS.map(x => `<button type="button" role="radio" class="ai-chip" data-ai="${x.id}" aria-checked="${x.id === a.id}"><span class="ai-dot" style="background:${x.color}">${esc(x.short[0].toUpperCase())}</span>${esc(x.name)}</button>`).join('');
   $('#ai-menu').innerHTML = AIS.map(x => `<button type="button" role="menuitemradio" data-ai="${x.id}" aria-checked="${x.id === a.id}"><span class="ai-dot" style="background:${x.color}">${esc(x.short[0].toUpperCase())}</span>${esc(x.name)}</button>`).join('');
   $('#btn-start').textContent = `Start with ${a.short}`;
+  for (const el of [$('#btn-start'), $('#wait-open')]) { if (a.url) el.href = a.url; else el.removeAttribute('href'); }
+  $('#wait-open').hidden = !a.url;
+  for (const el of doc().querySelectorAll('.ai-name')) el.textContent = a.short;
+  $('.paste-key').textContent = `${key}V`;
   $('#start-help').textContent = canFloat
     ? `Floats this board above your windows, copies the instructions${a.url ? ` and opens ${a.name}` : ''}. Paste there (${key}V) and send.`
     : `Copies the instructions${a.url ? ` and opens ${a.name}` : ''}. Paste there (${key}V) and send.`;
   $('#ask').placeholder = `Next request for ${a.short} (optional)`;
   $('#btn-done').textContent = `Send to ${a.short}`;
   $('#btn-done').title = `Copy the diagram and your request, then paste it into ${a.short}`;
-}
-
-// Open the chat in its own tab. A click may only open one window, so after the float this can be
-// refused; the banner then offers a button for it.
-function openChat() {
-  const a = ai(); if (!a.url) return true;
-  const w = window.open(a.url, 'kiertotie-chat');
-  return !!w;
 }
 
 // ---------- texts for the assistant ----------
@@ -1133,7 +1129,8 @@ function setMarkMode(on) {
 
 function updateEmpty() {
   const empty = state.nodes.size === 0 && state.groups.size === 0;
-  $('#start').hidden = !empty;
+  $('#start').hidden = !empty || started;
+  $('#waiting').hidden = !empty || !started;
   $('#composer').hidden = empty;
 }
 
@@ -1143,22 +1140,17 @@ async function copyStarter() {
   return ok;
 }
 
-// Start: copy the instructions, float the board, open the chat. One click, so the browser allows all three
-// (copying first, as floating uses up the click).
-async function startLoop() {
-  const ok = await copyText(starterText($('#first').value.trim()));
-  if (!ok) { toast('Copying failed. Try again.', 4000); return; }
-  if (canFloat && !pipWin) await floatBoard();
-  const opened = openChat();
-  if (!opened) { showChatButton(); }
-  toast(`Instructions copied. ${opened && ai().url ? `In ${ai().short}, press` : 'Paste them into your chat with'} ${key}V and send.`, 6000);
-}
-
-function showChatButton() {
-  const a = ai(); if (!a.url) return;
-  $('#note-text').innerHTML = `Instructions copied. <button type="button" id="open-chat" class="btn-inline">Open ${esc(a.name)}</button> and paste them there.`;
-  $('#note').hidden = false;
-  $('#open-chat').addEventListener('click', () => { openChat(); $('#note').hidden = true; });
+// Start: copy the instructions, float the board, open the chat, all from one click. Start is a real link to
+// the chat, because the browser opens a clicked link by itself, while a script may open only one window per
+// click and floating takes that one. The copy and the float are set off first, before the link opens.
+let started = false;
+function startLoop(e) {
+  if (!ai().url) e.preventDefault();
+  const copying = copyText(starterText($('#first').value.trim()));
+  const floating = canFloat && !pipWin ? floatBoard() : null;
+  started = true; updateEmpty();
+  copying.then(ok => toast(ok ? `Instructions copied. In ${ai().short}, press ${key}V and send.` : 'Copying failed: use Copy the instructions again.', 6000));
+  return floating;
 }
 
 function closeMore() { $('#more').open = false; }
@@ -1167,8 +1159,10 @@ $('#btn-mark').addEventListener('click', () => setMarkMode(!markMode));
 $('#btn-undo').addEventListener('click', undo);
 $('#btn-done').addEventListener('click', done);
 $('#ask').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); done(); } });
-$('#first').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); startLoop(); } });
+$('#first').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); $('#btn-start').click(); } });
 $('#btn-start').addEventListener('click', startLoop);
+$('#wait-copy').addEventListener('click', copyStarter);
+$('#wait-back').addEventListener('click', () => { started = false; updateEmpty(); });
 $('#ai-chips').addEventListener('click', e => { const b = e.target.closest('[data-ai]'); if (b) setAi(b.dataset.ai); });
 $('#start-sample').addEventListener('click', () => { applyText(SAMPLE, 'sample'); updateEmpty(); });
 $('#note-close').addEventListener('click', () => showNote(''));
