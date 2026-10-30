@@ -65,9 +65,20 @@ In Mermaid, icons are `kv@{ icon: "azure:key-vaults", label: "Secrets" }`, text 
 - **Line types:** a selected line's toolbar has HTTPS, sign-in / token, private link, VPN / ExpressRoute, event, two-way sync and SQL. Each sets the style, colour and label. Lines can also take one of seven colours; they're saved as Mermaid `linkStyle` lines.
 - **Flow steps:** **More → Number the steps** puts ① ② ③ on the line labels in flow order, or only on the selected line. **Add a step legend** makes a table of the steps next to the diagram and updates it when run again.
 
+## Screens and mockups
+
+A screen is a frame with a device: a phone, a tablet or a desktop window. Its pieces stack from the top in order, like a real screen. There are twelve: top bar, heading, text, input field, button, link, checkbox, image, list, table, bottom menu and side menu. The top bar stays at the top and the bottom menu at the bottom.
+
+- **On the board:** the phone button on the rail adds a screen (blank, login or main page) and pieces. A selected screen's toolbar switches the device or adds a piece. Drag a piece within its screen to reorder it, or onto another screen to move it there. A piece's colour is its accent, such as a blue main button.
+- **In Mermaid:** one subgraph per screen, then `class signin,home phone`. Pieces are `si_mail["Email"]:::uiInput`, `si_go["Sign in"]:::uiButton` and so on. A link from a piece leaves through the side of its screen. The assistant's instructions teach this, and **Templates → Mobile login flow** shows it.
+
+## Layout
+
+Every frame and screen is laid out on its own first, then placed in the flow as one block. Frames that follow each other sit side by side instead of stacking. Loops back don't turn the flow around, since ranking starts where flows begin. Lines curve by default, as in orim; a line's toolbar can make one straight or elbowed. Frame titles sit above the frame.
+
 ## More kinds of content
 
-- **Shapes** now include a table, a doc (a card with a title and longer text), a phone screen and a browser window. Double-click a table to edit it as lines of cells split by `|`. Double-click a doc to edit its title line and text.
+- **Shapes** now include a table and a doc (a card with a title and longer text). Double-click a table to edit it as lines of cells split by `|`. Double-click a doc to edit its title line and text.
 - **Images:** paste a picture or drop one on the board. It's shrunk to at most 1200 pixels and kept with the board. Share links leave images out, since they would make the link too long.
 - **Pen, highlighter, arrow and eraser** are under the pencil on the rail. Ink can be selected, moved, recoloured and deleted like anything else.
 - **Comments:** a numbered pin with text that shows on hover. Comments, doc text and tables travel to the chat in the Send packet, below the diagram. Exports leave comments out.

@@ -17,7 +17,8 @@ const BASE = location.origin + location.pathname;
 
 const state = { dir: 'LR', nodes: new Map(), groups: new Map(), edges: [], pos: new Map(), classDefs: new Map(), theme: null, ink: [], comments: [] };
 // Shapes Mermaid lacks, written as a class on a plain box (n1["…"]:::sticky); their content lives in canvas lines.
-const CLASS_SHAPES = new Set(['sticky', 'table', 'doc', 'phone', 'browser', 'image']);
+const CLASS_SHAPES = new Set(['sticky', 'table', 'doc', 'phone', 'browser', 'image', 'uiTopbar', 'uiHeading', 'uiText', 'uiInput', 'uiButton', 'uiLink',
+  'uiCheckbox', 'uiImage', 'uiList', 'uiTable', 'uiTabbar', 'uiSidebar']);
 // Canvas-line payloads are percent-encoded, since a line also ends at ;
 const enc = s => encodeURIComponent(s), dec = s => { try { return decodeURIComponent(s); } catch { return s; } };
 let boxes = new Map();       // node id -> {x, y, w, h, shape} (centre)
@@ -167,7 +168,7 @@ function colorVars(item, accent = null) {
 function parseInto(text, { replace, keep = true }) {
   const keptRoutes = new Map(keep ? state.edges.filter(e => e.route || e.color).map(e => [`${e.from}>${e.to}`, { route: e.route, color: e.color }]) : []);
   // What the user added that Mermaid can't carry stays too: zones, table cells, doc text, images.
-  const keptExtra = new Map(keep ? [...state.nodes.values(), ...state.groups.values()].filter(x => x.table || x.body || x.src || x.zone).map(x => [x.id, { table: x.table, body: x.body, src: x.src, zone: x.zone }]) : []);
+  const keptExtra = new Map(keep ? [...state.nodes.values(), ...state.groups.values()].filter(x => x.table || x.body || x.src || x.zone || x.dev).map(x => [x.id, { table: x.table, body: x.body, src: x.src, zone: x.zone, dev: x.dev }]) : []);
   if (replace && !keep) { state.theme = null; state.ink = []; state.comments = []; }
   if (replace) { state.nodes = new Map(); state.groups = new Map(); state.edges = []; state.classDefs = new Map(); }
   const warnings = [];
@@ -209,6 +210,7 @@ function parseInto(text, { replace, keep = true }) {
     if (line === '---' || /^title:\s/.test(line)) continue;
     if ((m = line.match(/^%%\s*@route\s+(\S+)\s+(\S+)\s+(curved|elbow|straight)\s*$/))) { pendRoute.set(`${m[1]}>${m[2]}`, m[3]); continue; }
     if ((m = line.match(/^%%\s*@zone\s+(\S+)\s+(\w+)\s*$/))) { extra(m[1], 'zone', m[2]); continue; }
+    if ((m = line.match(/^%%\s*@device\s+(\S+)\s+(\w+)\s*$/))) { if (DEVICE_ALIAS[m[2].toLowerCase()]) extra(m[1], 'dev', DEVICE_ALIAS[m[2].toLowerCase()]); continue; }
     if ((m = line.match(/^%%\s*@(table|doc|image)\s+(\S+)\s+(\S+)\s*$/))) {
       const v = dec(m[3]);
       if (m[1] === 'table') { try { extra(m[2], 'table', JSON.parse(v)); } catch { /* unreadable table */ } }
@@ -228,14 +230,14 @@ function parseInto(text, { replace, keep = true }) {
     }
     if (!line || line.startsWith('%%')) continue;
     if ((m = line.match(/^(?:flowchart|graph)\s*(LR|RL|TD|TB|BT)?\s*$/i))) { state.dir = (m[1] || 'TD').toUpperCase().replace('TB', 'TD'); continue; }
-    if ((m = line.match(/^classDef\s+([\w-]+)\s+(.+)$/))) { if (m[1] !== 'marked' && !CLASS_SHAPES.has(m[1])) state.classDefs.set(m[1], styleProps(m[2])); continue; }
+    if ((m = line.match(/^classDef\s+([\w-]+)\s+(.+)$/))) { if (m[1] !== 'marked' && !CLASS_SHAPES.has(m[1]) && !DEVICE_ALIAS[m[1].toLowerCase()]) state.classDefs.set(m[1], styleProps(m[2])); continue; }
     if ((m = line.match(/^linkStyle\s+([\d\s,]+?)\s+(.+)$/))) {
       const st = styleProps(m[2]);
       if (st.stroke) for (const i of m[1].split(',')) pendColor.set(+i, st.stroke);
       continue;
     }
     if ((m = line.match(/^style\s+([\w\u00C0-\uFFFF-]+)\s+(.+)$/))) {
-      const item = state.nodes.get(m[1]) || state.groups.get(m[1]);
+      const item = itemById(m[1]);
       if (item) item.style = { ...item.style, ...styleProps(m[2]) };
       continue;
     }
@@ -258,10 +260,11 @@ function parseInto(text, { replace, keep = true }) {
     }
     if ((m = line.match(/^class\s+(.+?)\s+([\w-]+)$/))) {
       for (const id of splitIds(m[1])) {
-        const item = state.nodes.get(id) || state.groups.get(id);
+        const item = itemById(id);
         if (!item) continue;
         if (m[2] === 'marked') item.marked = true;
-        else if (CLASS_SHAPES.has(m[2])) { if (state.nodes.has(id)) item.shape = m[2]; }
+        else if (item === state.groups.get(id) && DEVICE_ALIAS[m[2].toLowerCase()]) item.dev = DEVICE_ALIAS[m[2].toLowerCase()];
+        else if (CLASS_SHAPES.has(m[2])) { if (item === state.nodes.get(id)) item.shape = m[2]; }
         else item.cls = m[2];
       }
       continue;
@@ -269,7 +272,7 @@ function parseInto(text, { replace, keep = true }) {
     if ((m = line.match(/^(mark|unmark)\s+(.+)$/i))) {
       const on = m[1].toLowerCase() === 'mark';
       const ids = /^all$/i.test(m[2].trim()) ? [...state.nodes.keys(), ...state.groups.keys()] : splitIds(m[2]);
-      for (const id of ids) { const item = state.nodes.get(id) || state.groups.get(id); if (item) item.marked = on; }
+      for (const id of ids) { const item = itemById(id); if (item) item.marked = on; }
       continue;
     }
     if ((m = line.match(/^(?:remove|delete)\s+(.+)$/i))) {
@@ -279,7 +282,7 @@ function parseInto(text, { replace, keep = true }) {
       continue;
     }
     if ((m = line.match(/^rename\s+([\wÀ-￿-]+)\s*:\s*(.+)$/i))) {
-      const item = state.nodes.get(m[1]) || state.groups.get(m[1]);
+      const item = itemById(m[1]);
       if (item) { if ('title' in item) item.title = cleanLabel(m[2]); else item.label = cleanLabel(m[2]); }
       continue;
     }
@@ -313,12 +316,12 @@ function parseInto(text, { replace, keep = true }) {
   for (const [id, p] of pendPos) state.pos.set(id, p);
   for (const e of state.edges) {
     const k = `${e.from}>${e.to}`, r = pendRoute.get(k) || (!e.route && keptRoutes.get(k)?.route);
-    if (r) { if (r === 'straight') delete e.route; else e.route = r; }
+    if (r) { if (r === 'curved') delete e.route; else e.route = r; }
     if (!e.color && keptRoutes.get(k)?.color) e.color = keptRoutes.get(k).color;
   }
   for (const [i, c] of pendColor) if (state.edges[i]) state.edges[i].color = c;
   for (const [id, x] of [...keptExtra, ...pendExtra]) {
-    const item = state.nodes.get(id) || state.groups.get(id);
+    const item = itemById(id);
     if (item) for (const [k, v] of Object.entries(x)) if (v != null) item[k] = v;
   }
 
@@ -329,6 +332,9 @@ function parseInto(text, { replace, keep = true }) {
   for (const id of [...state.pos.keys()]) if (!state.nodes.has(id) && !state.groups.has(id)) state.pos.delete(id);
   return { warnings };
 }
+
+// A box or frame by id. A line to a frame first makes a placeholder box of that name; the frame wins over it.
+function itemById(id) { const n = state.nodes.get(id); return (n?.implicit && state.groups.get(id)) || n || state.groups.get(id); }
 
 function removeItem(id) {
   if (state.nodes.delete(id) || state.groups.has(id)) state.pos.delete(id);
@@ -371,9 +377,14 @@ function toMermaid() {
   // Other Mermaid tools draw these as boxes with the class's colours.
   const CLASS_LOOK = { sticky: `fill:${STICKY.fill},stroke:${STICKY.stroke}`, table: 'fill:#ffffff,stroke:#868e96', doc: 'fill:#ffffff,stroke:#868e96',
     phone: 'fill:#ffffff,stroke:#1a1a1a', browser: 'fill:#ffffff,stroke:#1a1a1a', image: 'fill:#f1f3f5,stroke:#868e96' };
+  for (const k of Object.keys(UI_KINDS)) CLASS_LOOK[k] = k === 'uiButton' ? 'fill:#5f6470,stroke:#5f6470,color:#ffffff' : 'fill:#eceef2,stroke:#c4c8d0,color:#4b5160';
   for (const c of CLASS_SHAPES) {
     const ids = [...state.nodes.values()].filter(n => n.shape === c).map(n => n.id);
     if (ids.length) L.push(`  classDef ${c} ${CLASS_LOOK[c]}`, `  class ${ids.join(',')} ${c}`);
+  }
+  for (const d of Object.keys(DEVICES)) {
+    const ids = [...state.groups.values()].filter(g => g.dev === d).map(g => g.id);
+    if (ids.length) L.push(`  classDef ${d} fill:#ffffff,stroke:#1a1a1a`, `  class ${ids.join(',')} ${d}`);
   }
   state.edges.forEach((e, i) => { if (e.color) L.push(`  linkStyle ${i} stroke:${e.color}`); });
   for (const x of items) if (x.style && Object.keys(x.style).length) L.push(`  style ${x.id} ${propsText(x.style)}`);
@@ -407,7 +418,7 @@ function canvasLines({ images = true } = {}) {
   return L;
 }
 
-// ---------- layout ----------
+// ---------- sizes ----------
 
 const measure = document.createElement('canvas').getContext('2d');
 function textWidth(s, size = 14, weight = 500) {
@@ -472,137 +483,181 @@ function nodeSize(n, p = {}) {
   return { w, h, lines };
 }
 
-function chainOf(id) {
-  const c = [];
-  let g = state.nodes.get(id)?.group;
-  while (g && !c.includes(g)) { c.unshift(g); g = state.groups.get(g)?.parent; }
-  return c;
+// ---------- screens: devices and wireframe pieces ----------
+
+// A screen is a frame with a device (class login phone, or %% @device login phone). Its pieces are ordinary
+// boxes with a ui class (l1["Email"]:::uiInput) that stack inside it from the top, like a real screen.
+const DEVICES = {
+  phone: { name: 'Phone', w: 220, h: 440, top: 26, bottom: 14, pad: 14 },
+  tablet: { name: 'Tablet', w: 360, h: 500, top: 22, bottom: 12, pad: 20 },
+  desktop: { name: 'Desktop', w: 560, h: 350, top: 24, bottom: 0, pad: 22 },
+};
+const DEVICE_ALIAS = { phone: 'phone', mobile: 'phone', tablet: 'tablet', ipad: 'tablet', desktop: 'desktop', browser: 'desktop', web: 'desktop', laptop: 'desktop' };
+// Pieces: name, height (null: from the text), and the default text. Menus and tables list items one per line or split by |.
+const UI_KINDS = {
+  uiTopbar: { name: 'Top bar', h: 34, def: 'Title' },
+  uiHeading: { name: 'Heading', h: 24, def: 'Heading' },
+  uiText: { name: 'Text', h: null, def: '' },
+  uiInput: { name: 'Input field', h: 30, def: 'Placeholder' },
+  uiButton: { name: 'Button', h: 32, def: 'Button' },
+  uiLink: { name: 'Link', h: 18, def: 'Link' },
+  uiCheckbox: { name: 'Checkbox', h: 20, def: 'Remember me' },
+  uiImage: { name: 'Image', h: 96, def: '' },
+  uiList: { name: 'List', h: null, def: 'First item\nSecond item\nThird item' },
+  uiTable: { name: 'Table', h: null, def: 'Name | Status | Date' },
+  uiTabbar: { name: 'Bottom menu', h: 40, def: 'Home\nSearch\nProfile' },
+  uiSidebar: { name: 'Side menu', h: null, def: 'Home\nProjects\nSettings' },
+};
+const isUi = n => !!(n && UI_KINDS[n.shape]);
+const uiItems = label => String(label || '').split(/\n|\|/).map(t => t.trim()).filter(Boolean);
+const deviceOf = gid => state.groups.get(gid)?.dev || null;
+
+// Where each piece of a screen goes, relative to the screen's top-left corner, and how tall the screen gets.
+function screenLayout(gid) {
+  const own = state.pos.get(gid), D = { ...DEVICES[deviceOf(gid)], ...(own?.w ? { w: own.w, h: own.h } : {}) }, out = new Map();
+  const kids = [...state.nodes.values()].filter(n => n.group === gid);
+  const bars = kids.filter(n => n.shape === 'uiTopbar'), tabs = kids.filter(n => n.shape === 'uiTabbar'), side = kids.find(n => n.shape === 'uiSidebar');
+  let top = D.top;
+  for (const n of bars) { out.set(n.id, { x: 0, y: top, w: D.w, h: UI_KINDS.uiTopbar.h }); top += UI_KINDS.uiTopbar.h; }
+  const sw = side ? Math.round(D.w * (deviceOf(gid) === 'phone' ? 0.5 : 0.24)) : 0;
+  const x0 = sw + D.pad, cw = D.w - sw - D.pad * 2;
+  let y = top + D.pad + 4;
+  for (const n of kids) {
+    if (n === side || bars.includes(n) || tabs.includes(n)) continue;
+    const k = UI_KINDS[n.shape];
+    let w = cw, h;
+    if (k) {
+      if (n.shape === 'uiText') h = n.label ? wrapLabel(n.label, cw, 11.5, 400).length * 15 + 4 : 34;
+      else if (n.shape === 'uiList') h = uiItems(n.label).length * 30;
+      else if (n.shape === 'uiTable') h = 22 + 3 * 20;
+      else h = k.h;
+      if (n.shape === 'uiImage' && deviceOf(gid) === 'desktop') h = 120;
+    } else { const s = nodeSize(n); w = Math.min(cw, s.w); h = s.h; }
+    out.set(n.id, { x: x0 + (cw - w) / 2, y, w, h });
+    y += h + (n.shape === 'uiHeading' ? 8 : 10);
+  }
+  const tabH = tabs.length ? UI_KINDS.uiTabbar.h : 0;
+  const H = Math.max(D.h, y + D.pad + tabH + D.bottom);
+  for (const n of tabs) out.set(n.id, { x: 0, y: H - D.bottom - tabH, w: D.w, h: tabH });
+  if (side) out.set(side.id, { x: 0, y: top, w: sw, h: H - top - D.bottom - tabH });
+  return { w: D.w, h: H, pieces: out };
 }
 
+// ---------- layout ----------
+
+// Every frame is laid out on its own first, then placed in its parent's flow as one block, so frames and
+// screens line up along the flow instead of stacking. Within a block: break cycles, rank by longest path,
+// order each rank by its neighbours, then place ranks along the main axis.
+const FRAME_PAD = 20, FRAME_TITLE = 24;
+let deviceRects = new Map();
 function layout() {
-  const ids = [...state.nodes.keys()];
-  const size = new Map(ids.map(id => [id, nodeSize(state.nodes.get(id), state.pos.get(id))]));
-  const out = new Map(ids.map(id => [id, []]));
-  for (const e of state.edges) if (e.from !== e.to && out.has(e.from) && out.has(e.to)) out.get(e.from).push(e.to);
-
-  // Break cycles, then longest-path ranks.
-  const color = new Map(), dag = [];
-  const visit = u => {
-    color.set(u, 1);
-    for (const v of out.get(u)) { if (color.get(v) === 1) continue; dag.push([u, v]); if (!color.get(v)) visit(v); }
-    color.set(u, 2);
+  const horiz = state.dir === 'LR' || state.dir === 'RL', flip = state.dir === 'RL' || state.dir === 'BT';
+  const GAP_MAIN = horiz ? 110 : 80, GAP_CROSS = horiz ? 36 : 44;
+  const size = new Map([...state.nodes.values()].map(n => [n.id, nodeSize(n, state.pos.get(n.id))]));
+  const kidsOf = gid => [
+    ...[...state.nodes.values()].filter(n => (n.group || null) === gid).map(n => n.id),
+    ...[...state.groups.values()].filter(g => (g.parent || null) === gid).map(g => g.id),
+  ];
+  // The item at this level that holds id: the box itself, or the frame around it.
+  const itemAt = (id, gid) => {
+    let cur = id, up = state.nodes.has(id) ? state.nodes.get(id).group || null : state.groups.get(id)?.parent || null;
+    for (let k = 0; k < 50; k++) {
+      if (up === gid) return cur;
+      if (up == null) return null;
+      cur = up; up = state.groups.get(up)?.parent || null;
+    }
+    return null;
   };
-  ids.forEach(id => color.get(id) || visit(id));
-  const rank = new Map(ids.map(id => [id, 0]));
-  for (let k = 0; k < ids.length; k++) {
-    let changed = false;
-    for (const [u, v] of dag) if (rank.get(v) < rank.get(u) + 1) { rank.set(v, rank.get(u) + 1); changed = true; }
-    if (!changed) break;
-  }
-  const layers = [];
-  ids.forEach(id => (layers[rank.get(id)] ||= []).push(id));
-  for (let r = 0; r < layers.length; r++) layers[r] ||= [];
-
-  const chains = new Map(ids.map(id => [id, chainOf(id)]));
-  const preds = new Map(ids.map(id => [id, []])), succs = new Map(ids.map(id => [id, []]));
-  for (const [u, v] of dag) { succs.get(u).push(v); preds.get(v).push(u); }
-  const index = new Map();
-  const reindex = () => layers.forEach(l => l.forEach((id, i) => index.set(id, i)));
-  reindex();
-  const order = (layer, nbrs) => {
-    const bary = new Map(layer.map(id => {
-      const ns = nbrs.get(id).filter(n => index.has(n));
-      return [id, ns.length ? ns.reduce((s, n) => s + index.get(n), 0) / ns.length : index.get(id)];
-    }));
-    const gsum = new Map(), gcnt = new Map();
-    for (const id of layer) for (const g of chains.get(id)) { gsum.set(g, (gsum.get(g) || 0) + bary.get(id)); gcnt.set(g, (gcnt.get(g) || 0) + 1); }
-    const gavg = g => gsum.get(g) / gcnt.get(g);
-    layer.sort((a, b) => {
-      const ca = chains.get(a), cb = chains.get(b);
-      for (let i = 0; ; i++) {
-        const ga = ca[i], gb = cb[i];
-        if (ga && ga === gb) continue;
-        const va = ga ? gavg(ga) : bary.get(a), vb = gb ? gavg(gb) : bary.get(b);
-        return va - vb || ((ga || a) < (gb || b) ? -1 : 1);
+  const rel = new Map(), foot = new Map(), screens = new Map();
+  const block = gid => {
+    if (gid && deviceOf(gid)) { const sc = screenLayout(gid); screens.set(gid, sc); return { w: sc.w, h: sc.h }; }
+    const items = kidsOf(gid);
+    for (const id of items) {
+      if (state.nodes.has(id)) foot.set(id, size.get(id));
+      else { const b = block(id); foot.set(id, { w: b.w + (deviceOf(id) ? 0 : FRAME_PAD * 2), h: b.h + (deviceOf(id) ? 0 : FRAME_PAD * 2) + FRAME_TITLE }); }
+    }
+    if (!items.length) return { w: 160, h: 60 };
+    const set = new Set(items), out = new Map(items.map(id => [id, new Set()]));
+    for (const e of state.edges) { const a = itemAt(e.from, gid), b = itemAt(e.to, gid); if (a && b && a !== b && set.has(a) && set.has(b)) out.get(a).add(b); }
+    // Cycles broken by a depth-first walk; ranks by longest path.
+    const seen = new Map(), dag = [];
+    const visit = u => { seen.set(u, 1); for (const v of out.get(u)) { if (seen.get(v) === 1) continue; dag.push([u, v]); if (!seen.get(v)) visit(v); } seen.set(u, 2); };
+    // Start from where flows begin (nothing points there), so a loop back doesn't turn the flow around.
+    const indeg = new Map(items.map(id => [id, 0])); for (const vs of out.values()) for (const v of vs) indeg.set(v, indeg.get(v) + 1);
+    [...items].sort((x, y) => (indeg.get(x) > 0) - (indeg.get(y) > 0)).forEach(id => seen.get(id) || visit(id));
+    const rank = new Map(items.map(id => [id, 0]));
+    for (let k = 0; k < items.length; k++) { let ch = false; for (const [u, v] of dag) if (rank.get(v) < rank.get(u) + 1) { rank.set(v, rank.get(u) + 1); ch = true; } if (!ch) break; }
+    const maxR = Math.max(...rank.values());
+    if (flip) for (const id of items) rank.set(id, maxR - rank.get(id));
+    const layers = [...Array(maxR + 1)].map(() => []);
+    items.forEach(id => layers[rank.get(id)].push(id));
+    const preds = new Map(items.map(id => [id, []])), succs = new Map(items.map(id => [id, []]));
+    for (const [u, v] of dag) { succs.get(u).push(v); preds.get(v).push(u); }
+    const index = new Map(), reindex = () => layers.forEach(l => l.forEach((id, i) => index.set(id, i)));
+    reindex();
+    const order = (layer, nbrs) => {
+      const bary = new Map(layer.map(id => { const ns = nbrs.get(id).filter(n => index.has(n)); return [id, ns.length ? ns.reduce((a, n) => a + index.get(n), 0) / ns.length : index.get(id)]; }));
+      layer.sort((a, b) => bary.get(a) - bary.get(b));
+    };
+    for (let sweep = 0; sweep < 4; sweep++) {
+      for (let r = 1; r < layers.length; r++) { order(layers[r], flip ? succs : preds); reindex(); }
+      for (let r = layers.length - 2; r >= 0; r--) { order(layers[r], flip ? preds : succs); reindex(); }
+    }
+    const main = id => horiz ? foot.get(id).w : foot.get(id).h, cross = id => horiz ? foot.get(id).h : foot.get(id).w;
+    let m = 0;
+    const along = new Map(), across = new Map();
+    for (const layer of layers) {
+      const thick = Math.max(0, ...layer.map(main));
+      const span = layer.reduce((a, id) => a + cross(id), 0) + GAP_CROSS * (layer.length - 1);
+      let c = -span / 2;
+      for (const id of layer) { along.set(id, m + thick / 2); across.set(id, c + cross(id) / 2); c += cross(id) + GAP_CROSS; }
+      m += thick + GAP_MAIN;
+    }
+    // Pull each item towards the middle of the items it links to, keeping the order: fewer crossing, straighter lines.
+    for (let pass = 0; pass < 3; pass++) for (const layer of layers) {
+      for (let i = 0; i < layer.length; i++) {
+        const id = layer[i], ns = [...preds.get(id), ...succs.get(id)];
+        if (!ns.length) continue;
+        const want = ns.reduce((a, n) => a + across.get(n), 0) / ns.length;
+        const lo = i ? across.get(layer[i - 1]) + (cross(layer[i - 1]) + cross(id)) / 2 + GAP_CROSS : -Infinity;
+        const hi = i < layer.length - 1 ? across.get(layer[i + 1]) - (cross(layer[i + 1]) + cross(id)) / 2 - GAP_CROSS : Infinity;
+        across.set(id, Math.max(lo, Math.min(hi, want)));
       }
-    });
-  };
-  for (let sweep = 0; sweep < 4; sweep++) {
-    for (let r = 1; r < layers.length; r++) { order(layers[r], preds); reindex(); }
-    for (let r = layers.length - 2; r >= 0; r--) { order(layers[r], succs); reindex(); }
-  }
-  if (layers[0]) { order(layers[0], succs); reindex(); }
-
-  const horiz = state.dir === 'LR' || state.dir === 'RL';
-  const main = id => horiz ? size.get(id).w : size.get(id).h;
-  const cross = id => horiz ? size.get(id).h : size.get(id).w;
-  const GAP_MAIN = horiz ? 90 : 70, GAP_CROSS = horiz ? 26 : 34, GAP_BAND = 40;
-  // Cross-axis padding of a group box: the title side gets more room in left-to-right layouts.
-  const PAD_START = horiz ? 30 : 18, PAD_END = 18;
-
-  // Main axis: one slot per rank.
-  const along = new Map();
-  let m = 0;
-  for (const layer of layers) {
-    const thick = Math.max(0, ...layer.map(main));
-    layer.forEach(id => along.set(id, m + thick / 2));
-    m += thick + GAP_MAIN;
-  }
-
-  // Cross axis: every group is a band that runs through all ranks, so group boxes never overlap.
-  // Within a group, its direct boxes share one band and each subgroup gets a band of its own.
-  const rankOf = id => rank.get(id);
-  const members = new Map();
-  for (const id of ids) for (const g of chains.get(id)) (members.get(g) || members.set(g, []).get(g)).push(id);
-  const avgIndex = list => list.reduce((s, id) => s + index.get(id) / Math.max(1, layers[rankOf(id)].length), 0) / list.length;
-  const bandsMemo = new Map();
-  const bandsOf = gid => {
-    if (bandsMemo.has(gid)) return bandsMemo.get(gid);
-    const bands = [];
-    const direct = ids.filter(id => (state.nodes.get(id).group || null) === gid);
-    if (direct.length) {
-      const per = new Map();
-      for (const id of direct) (per.get(rankOf(id)) || per.set(rankOf(id), []).get(rankOf(id))).push(id);
-      let size = 0;
-      for (const list of per.values()) size = Math.max(size, list.reduce((s, id) => s + cross(id), 0) + GAP_CROSS * (list.length - 1));
-      bands.push({ kind: 'direct', per, size, key: avgIndex(direct) });
     }
-    for (const g of state.groups.values()) {
-      if ((g.parent || null) !== gid || !members.has(g.id)) continue;
-      bands.push({ kind: 'group', id: g.id, size: PAD_START + innerSize(g.id) + PAD_END, key: avgIndex(members.get(g.id)) });
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const id of items) {
+      const [x, y] = horiz ? [along.get(id), across.get(id)] : [across.get(id), along.get(id)], f = foot.get(id);
+      rel.set(id, { x, y });
+      x0 = Math.min(x0, x - f.w / 2); x1 = Math.max(x1, x + f.w / 2); y0 = Math.min(y0, y - f.h / 2); y1 = Math.max(y1, y + f.h / 2);
     }
-    bands.sort((a, b) => a.key - b.key);
-    bandsMemo.set(gid, bands);
-    return bands;
+    for (const id of items) { const r = rel.get(id); rel.set(id, { x: r.x - x0, y: r.y - y0 }); }
+    return { w: x1 - x0, h: y1 - y0 };
   };
-  const innerSize = gid => { const b = bandsOf(gid); return b.reduce((s, x) => s + x.size, 0) + GAP_BAND * Math.max(0, b.length - 1); };
-  const across = new Map();
-  const place = (gid, offset) => {
-    let off = offset;
-    for (const band of bandsOf(gid)) {
-      if (band.kind === 'direct') {
-        for (const list of band.per.values()) {
-          list.sort((a, b) => index.get(a) - index.get(b));
-          const used = list.reduce((s, id) => s + cross(id), 0) + GAP_CROSS * (list.length - 1);
-          let c = off + (band.size - used) / 2;
-          for (const id of list) { across.set(id, c + cross(id) / 2); c += cross(id) + GAP_CROSS; }
-        }
-      } else place(band.id, off + PAD_START);
-      off += band.size + GAP_BAND;
-    }
-  };
-  place(null, -innerSize(null) / 2);
-
+  const all = block(null);
+  // Absolute places: the board is centred on 0,0; a frame's boxes start inside its padding, below its title.
   const result = new Map();
-  for (const id of ids) {
-    const [x, y] = horiz ? [along.get(id), across.get(id)] : [across.get(id), along.get(id)];
-    result.set(id, { x: state.dir === 'RL' ? -x : x, y: state.dir === 'BT' ? -y : y });
-  }
+  deviceRects = new Map();
+  const place = (gid, ox, oy) => {
+    for (const id of kidsOf(gid)) {
+      const r = rel.get(id); if (!r) continue;
+      const cx = ox + r.x, cy = oy + r.y;
+      if (state.nodes.has(id)) { result.set(id, { x: cx, y: cy }); continue; }
+      const f = foot.get(id), bx = cx - f.w / 2, by = cy - f.h / 2 + FRAME_TITLE;
+      if (deviceOf(id)) {
+        const own = state.pos.get(id), sc = screens.get(id);
+        const rx = own?.x != null ? own.x - sc.w / 2 : bx, ry = own?.x != null ? own.y - sc.h / 2 : by;
+        deviceRects.set(id, { x: rx + sc.w / 2, y: ry + sc.h / 2, w: sc.w, h: sc.h });
+        for (const [pid, p] of sc.pieces) { result.set(pid, { x: rx + p.x + p.w / 2, y: ry + p.y + p.h / 2 }); size.set(pid, { ...size.get(pid), w: p.w, h: p.h, lines: size.get(pid).lines }); }
+      } else place(id, bx + FRAME_PAD, by + FRAME_PAD);
+    }
+  };
+  place(null, -all.w / 2, -all.h / 2);
 
   boxes = new Map();
-  for (const id of ids) {
-    const p = state.pos.get(id) || result.get(id);
-    boxes.set(id, { x: p.x, y: p.y, ...size.get(id), shape: state.nodes.get(id).shape });
+  for (const [id, n] of state.nodes) {
+    const p = state.pos.get(id) || result.get(id) || { x: 0, y: 0 };
+    const sz = state.pos.get(id)?.w && isUi(n) ? { ...size.get(id), w: state.pos.get(id).w, h: state.pos.get(id).h } : size.get(id);
+    boxes.set(id, { x: p.x, y: p.y, ...sz, shape: n.shape });
   }
   computeGroupBoxes();
 }
@@ -615,10 +670,18 @@ function groupBoxesFor(skip = null) {
   const out = new Map();
   const gs = [...state.groups.keys()].sort((a, b) => groupDepth(b) - groupDepth(a));
   for (const gid of gs) {
+    // A screen is exactly its device: moved by hand, or where the layout put it.
+    if (deviceOf(gid)) {
+      const own = state.pos.get(gid), auto = deviceRects.get(gid);
+      if (own?.x != null) out.set(gid, { x: own.x, y: own.y, w: auto?.w || own.w, h: auto?.h || own.h });
+      else if (auto) out.set(gid, auto);
+      continue;
+    }
     const rects = [];
     for (const n of state.nodes.values()) if (n.group === gid && boxes.has(n.id) && !skip?.has(n.id)) rects.push(boxes.get(n.id));
-    for (const c of state.groups.values()) if (c.parent === gid && out.has(c.id)) rects.push(out.get(c.id));
-    const pad = 18, top = 30;
+    // A frame inside also needs room for its title, which sits above it.
+    for (const c of state.groups.values()) if (c.parent === gid && out.has(c.id)) { const r = out.get(c.id); rects.push({ ...r, y: r.y - FRAME_TITLE / 2, h: r.h + FRAME_TITLE }); }
+    const pad = FRAME_PAD, top = FRAME_PAD;
     let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
     if (rects.length) {
       x0 = Math.min(...rects.map(r => r.x - r.w / 2)) - pad; x1 = Math.max(...rects.map(r => r.x + r.w / 2)) + pad;
@@ -789,7 +852,61 @@ function textSvg(lines, dy = 0, step = 18) {
 }
 
 // What goes inside a node's <g>, centred on 0,0.
+// Wireframe pieces in greys, as in Miro's wireframe kit; a fill colour on a piece is its accent.
+function uiSvg(n, b) {
+  // An empty label falls back to the id elsewhere; on a piece it just means no text.
+  const w = b.w, h = b.h, x0 = -w / 2, y0 = -h / 2, acc = colorsOf(n).fill, label = n.label === n.id ? '' : n.label || '';
+  const T = (t, x, y, cls, anchor = 'start', fill = null) => `<text class="ui-t ${cls}" x="${x}" y="${y}" text-anchor="${anchor}" dominant-baseline="central"${fill ? ` style="fill:${esc(fill)}"` : ''}>${esc(t)}</text>`;
+  const bars = (x, y, ws) => ws.map((f, i) => `<rect class="ui-bar" x="${x}" y="${y + i * 10}" width="${w * f}" height="5" rx="2.5"/>`).join('');
+  switch (n.shape) {
+    case 'uiTopbar': return `<rect class="ui-top" x="${x0}" y="${y0}" width="${w}" height="${h}"/><path class="ui-line" d="M${x0},${-y0} h${w}"/>` +
+      `<path class="ui-ico" d="M${x0 + 12},-4 h12 M${x0 + 12},0 h12 M${x0 + 12},4 h12"/>${T(label, 0, 0, 'ui-title', 'middle')}<circle class="ui-avatar" cx="${-x0 - 18}" cy="0" r="7"/>`;
+    case 'uiHeading': return `<rect class="ui-hit" x="${x0}" y="${y0}" width="${w}" height="${h}"/>${T(label, x0, 0, 'ui-h')}`;
+    case 'uiText': {
+      if (!label) return `<rect class="ui-hit" x="${x0}" y="${y0}" width="${w}" height="${h}"/>${bars(x0, y0 + 5, [1, 0.92, 0.6])}`;
+      const lines = wrapLabel(label, w, 11.5, 400);
+      return `<rect class="ui-hit" x="${x0}" y="${y0}" width="${w}" height="${h}"/>${lines.map((l, i) => T(l, x0, y0 + 9 + i * 15, 'ui-p')).join('')}`;
+    }
+    case 'uiInput': return `<rect class="ui-input" x="${x0}" y="${y0}" width="${w}" height="${h}" rx="5"/>${T(label, x0 + 10, 0, 'ui-ph')}`;
+    case 'uiButton': return `<rect class="ui-btn" x="${x0}" y="${y0}" width="${w}" height="${h}" rx="6"${acc ? ` style="fill:${esc(acc)}"` : ''}/>${T(label, 0, 0, 'ui-btn-t', 'middle')}`;
+    case 'uiLink': return `<rect class="ui-hit" x="${x0}" y="${y0}" width="${w}" height="${h}"/>${T(label, 0, 0, 'ui-link', 'middle', acc)}`;
+    case 'uiCheckbox': return `<rect class="ui-hit" x="${x0}" y="${y0}" width="${w}" height="${h}"/><rect class="ui-input" x="${x0}" y="-7" width="14" height="14" rx="3"/>${T(label, x0 + 22, 0, 'ui-p')}`;
+    case 'uiImage': return `<rect class="ui-img" x="${x0}" y="${y0}" width="${w}" height="${h}" rx="6"/><path class="ui-img-x" d="M${x0},${y0} L${-x0},${-y0} M${-x0},${y0} L${x0},${-y0}"/>` +
+      (label ? T(label, 0, 0, 'ui-cap', 'middle') : '');
+    case 'uiList': return `<rect class="ui-hit" x="${x0}" y="${y0}" width="${w}" height="${h}"/>` + uiItems(label).map((t, i) => {
+      const y = y0 + i * 30 + 15;
+      return `<circle class="ui-avatar" cx="${x0 + 10}" cy="${y}" r="9"/>${T(t, x0 + 26, y, 'ui-p')}<path class="ui-ico" d="M${-x0 - 8},${y - 4} l4,4 l-4,4"/>${i ? `<path class="ui-line" d="M${x0},${y - 15} h${w}"/>` : ''}`;
+    }).join('');
+    case 'uiTable': {
+      const cols = uiItems(label).length ? uiItems(label) : ['Name', 'Status'], cw = w / cols.length;
+      return `<rect class="ui-input" x="${x0}" y="${y0}" width="${w}" height="${h}" rx="5"/><rect class="ui-top" x="${x0 + 1}" y="${y0 + 1}" width="${w - 2}" height="21" rx="4"/>` +
+        cols.map((c, i) => T(c, x0 + i * cw + 8, y0 + 11, 'ui-th')).join('') +
+        [1, 2, 3].map(r => `<path class="ui-line" d="M${x0},${y0 + 22 + (r - 1) * 20} h${w}"/>` + cols.map((_, i) => `<rect class="ui-bar" x="${x0 + i * cw + 8}" y="${y0 + 22 + (r - 1) * 20 + 8}" width="${cw * 0.55}" height="5" rx="2.5"/>`).join('')).join('');
+    }
+    case 'uiTabbar': {
+      const items = uiItems(label), iw = w / Math.max(1, items.length);
+      return `<rect class="ui-tab" x="${x0}" y="${y0}" width="${w}" height="${h}"/><path class="ui-line" d="M${x0},${y0} h${w}"/>` +
+        items.map((t, i) => { const cx = x0 + iw * (i + 0.5), on = i === 0; return `<circle class="ui-dot${on ? ' on' : ''}" cx="${cx}" cy="${y0 + 13}" r="5"${on && acc ? ` style="fill:${esc(acc)}"` : ''}/>${T(t, cx, y0 + 29, `ui-tab-t${on ? ' on' : ''}`, 'middle')}`; }).join('');
+    }
+    case 'uiSidebar': return `<rect class="ui-top" x="${x0}" y="${y0}" width="${w}" height="${h}"/><path class="ui-line" d="M${-x0},${y0} v${h}"/>` +
+      uiItems(label).map((t, i) => `${i ? '' : `<rect class="ui-side-on" x="${x0 + 6}" y="${y0 + 8}" width="${w - 12}" height="24" rx="5"${acc ? ` style="fill:${esc(acc)}"` : ''}/>`}${T(t, x0 + 16, y0 + 20 + i * 28, `ui-p${i ? '' : ' on'}`)}`).join('');
+  }
+  return shapeSvg(b);
+}
+
+// A screen's device around its pieces: phone bezel and notch, tablet camera, desktop window bar.
+function deviceSvg(dev, b, on) {
+  const x0 = b.x - b.w / 2, y0 = b.y - b.h / 2, cls = `device-frame${on ? ' sel' : ''}`;
+  if (dev === 'phone') return `<rect class="${cls}" x="${x0}" y="${y0}" width="${b.w}" height="${b.h}" rx="26"/>` +
+    `<rect class="device-notch" x="${b.x - 26}" y="${y0 + 7}" width="52" height="12" rx="6"/><rect class="device-home" x="${b.x - 30}" y="${y0 + b.h - 8}" width="60" height="3" rx="1.5"/>`;
+  if (dev === 'tablet') return `<rect class="${cls}" x="${x0}" y="${y0}" width="${b.w}" height="${b.h}" rx="18"/><circle class="device-notch" cx="${b.x}" cy="${y0 + 10}" r="3"/>`;
+  return `<rect class="${cls}" x="${x0}" y="${y0}" width="${b.w}" height="${b.h}" rx="8"/><path class="device-bar" d="M${x0},${y0 + 24} h${b.w}"/>` +
+    [0, 1, 2].map(i => `<circle class="device-dot" cx="${x0 + 13 + i * 12}" cy="${y0 + 12}" r="3.5"/>`).join('') +
+    `<rect class="device-url" x="${x0 + 56}" y="${y0 + 6}" width="${Math.max(40, b.w - 112)}" height="12" rx="6"/>`;
+}
+
 function nodeInner(n, b) {
+  if (isUi(n)) return uiSvg(n, b);
   if (n.shape === 'icon') {
     const ic = iconFor(n.icon), top = -b.h / 2;
     const pic = ic ? `<image href="${ic.uri}" x="-20" y="${top + 2}" width="40" height="40"/>`
@@ -847,10 +964,26 @@ function sideOf(b, toward, horiz) {
     : { x: b.x, y: b.y + Math.sign(dy || 1) * b.h / 2, nx: 0, ny: Math.sign(dy || 1) };
 }
 
+// Lines curve unless set straight or elbow, as in orim.
+const routeOf = e => e.route || 'curved';
+
 // A line's path and a function for the point a fraction u along it.
 function edgeGeometry(e, a, b) {
-  if (e.route === 'curved') {
-    const s = sideOf(a, b), t = sideOf(b, a);
+  // A line from a piece of a screen leaves through the screen's side, level with the piece.
+  const screenOf = id => { const n = state.nodes.get(id); return n && deviceOf(n.group) && groupBoxes.get(n.group); };
+  const exitFrom = (id, box, other) => {
+    const sc = screenOf(id); if (!sc) return null;
+    const dir = Math.sign((other.x - sc.x) || 1);
+    return { x: sc.x + dir * sc.w / 2, y: box.y, nx: dir, ny: 0 };
+  };
+  const sa = exitFrom(e.from, a, b), sb = exitFrom(e.to, b, a);
+  if (routeOf(e) === 'curved') {
+    const s = sa || sideOf(a, b), t = sb || sideOf(b, a);
+    // A line that also runs the other way keeps to its own side of the pair.
+    if (state.edges.some(o => o.from === e.to && o.to === e.from)) {
+      const k = e.from < e.to ? 7 : -7;
+      for (const q of [s, t]) { if (q.nx) q.y += k; else q.x += k; }
+    }
     const k = Math.max(30, Math.min(140, Math.hypot(t.x - s.x, t.y - s.y) * 0.45));
     const c1 = { x: s.x + s.nx * k, y: s.y + s.ny * k }, c2 = { x: t.x + t.nx * k, y: t.y + t.ny * k };
     const at = u => {
@@ -860,8 +993,8 @@ function edgeGeometry(e, a, b) {
     return { d: `M${s.x},${s.y} C${c1.x},${c1.y} ${c2.x},${c2.y} ${t.x},${t.y}`, at, start: s };
   }
   if (e.route === 'elbow') {
-    const horiz = Math.abs(b.x - a.x) >= Math.abs(b.y - a.y);
-    const s = sideOf(a, b, horiz), t = sideOf(b, a, horiz);
+    const horiz = sa || sb ? true : Math.abs(b.x - a.x) >= Math.abs(b.y - a.y);
+    const s = sa || sideOf(a, b, horiz), t = sb || sideOf(b, a, horiz);
     const pts = horiz ? [s, { x: (s.x + t.x) / 2, y: s.y }, { x: (s.x + t.x) / 2, y: t.y }, t]
       : [s, { x: s.x, y: (s.y + t.y) / 2 }, { x: t.x, y: (s.y + t.y) / 2 }, t];
     return { d: `M${pts.map(p => `${p.x},${p.y}`).join(' L')}`, at: alongPolyline(pts), start: s };
@@ -871,7 +1004,7 @@ function edgeGeometry(e, a, b) {
   const nx = -(b.y - a.y) / len, ny = (b.x - a.x) / len;
   const bulge = state.edges.some(o => o.from === e.to && o.to === e.from) ? 34 : 0;
   const c = { x: (a.x + b.x) / 2 + nx * bulge, y: (a.y + b.y) / 2 + ny * bulge };
-  const s = clip(a, c.x, c.y), t = clip(b, c.x, c.y);
+  const s = sa || clip(a, c.x, c.y), t = sb || clip(b, c.x, c.y);
   const at = u => ({ x: (1 - u) ** 2 * s.x + 2 * (1 - u) * u * c.x + u * u * t.x, y: (1 - u) ** 2 * s.y + 2 * (1 - u) * u * c.y + u * u * t.y });
   return { d: bulge ? `M${s.x},${s.y} Q${c.x},${c.y} ${t.x},${t.y}` : `M${s.x},${s.y} L${t.x},${t.y}`, at, start: s };
 }
@@ -917,13 +1050,21 @@ function render() {
     const cls = ['group', Z && 'zone', g.marked && 'marked', isSel(`g:${gid}`) && 'sel'].filter(Boolean).join(' ');
     const a = Z ? Z.stroke : accentOf(gid);
     const ic = Z?.icon && iconFor(Z.icon), x0 = b.x - b.w / 2, y0 = b.y - b.h / 2;
+    // The title sits above the frame, as in Miro and orim; a screen draws its device instead of a frame.
+    const title = (ic ? `<image href="${ic.uri}" x="${x0}" y="${y0 - 19}" width="15" height="15"/>` : '') +
+      `<text class="group-title" x="${x0 + (ic ? 20 : 2)}" y="${y0 - 11}" dominant-baseline="central">${esc(g.title)}</text>`;
+    if (g.dev) { html += `<g class="${cls} screen" data-group="${esc(gid)}">${deviceSvg(g.dev, b, isSel(`g:${gid}`))}${title}</g>`; continue; }
     html += `<g class="${cls}" data-group="${esc(gid)}"${colorVars(g, a && { stroke: a, fill: `color-mix(in srgb, ${a} ${Z ? 5 : 9}%, transparent)` })}>` +
-      `<rect x="${x0}" y="${y0}" width="${b.w}" height="${b.h}" rx="10"${Z ? ` style="stroke-dasharray:${Z.dash || 'none'}"` : ''}/>` +
-      (ic ? `<image href="${ic.uri}" x="${x0 + 10}" y="${y0 + 7}" width="16" height="16"/>` : '') +
-      `<text x="${x0 + (ic ? 31 : 12)}" y="${y0 + 18}">${esc(g.title)}</text></g>`;
+      `<rect x="${x0}" y="${y0}" width="${b.w}" height="${b.h}" rx="8"${Z ? ` style="stroke-dasharray:${Z.dash || 'none'}"` : ''}/>${title}</g>`;
   }
   // Labels already placed, and the boxes, so labels can step aside from them.
+  // Labels step aside from boxes, screens and frame titles.
   const taken = [...boxes.values()].map(b => ({ x0: b.x - b.w / 2, x1: b.x + b.w / 2, y0: b.y - b.h / 2, y1: b.y + b.h / 2 }));
+  for (const [gid, b] of groupBoxes) {
+    const x0 = b.x - b.w / 2, y0 = b.y - b.h / 2;
+    taken.push({ x0, x1: x0 + textWidth(state.groups.get(gid).title, 12.5, 600) + 24, y0: y0 - FRAME_TITLE, y1: y0 });
+    if (deviceOf(gid)) taken.push({ x0, x1: x0 + b.w, y0, y1: y0 + b.h });
+  }
   const hits = r => taken.some(t => r.x0 < t.x1 && r.x1 > t.x0 && r.y0 < t.y1 && r.y1 > t.y0);
   state.edges.forEach((e, i) => {
     const a = anchorBox(e.from), b = anchorBox(e.to);
@@ -947,7 +1088,7 @@ function render() {
   html += state.ink.filter(k => k.kind === 'hl').map(inkSvg).join('');
   for (const [id, b] of boxes) {
     const n = state.nodes.get(id);
-    const kind = ['sticky', 'text', 'icon', 'table', 'doc', 'phone', 'browser', 'image'].includes(n.shape) ? n.shape : '';
+    const kind = isUi(n) ? 'ui' : ['sticky', 'text', 'icon', 'table', 'doc', 'phone', 'browser', 'image'].includes(n.shape) ? n.shape : '';
     const cls = ['node', kind, n.marked && 'marked', isSel(`n:${id}`) && 'sel', flash.has(id) && `flash-${flash.get(id)}`].filter(Boolean).join(' ');
     const a = (!kind || kind === 'table' || kind === 'doc') && accentOf(n.group);
     html += `<g class="${cls}" data-node="${esc(id)}" transform="translate(${b.x},${b.y})"${colorVars(n, a && { stroke: a })}>${nodeInner(n, b)}</g>`;
@@ -1017,7 +1158,8 @@ function handlesSvg() {
     for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]])
       out += `<circle class="port" data-port="${esc(sel.id)}" cx="${b.x + dx * (b.w / 2 + off)}" cy="${b.y + dy * (b.h / 2 + off)}" r="${r}"/>`;
   }
-  if (!(sel.type === 'node' && state.nodes.get(sel.id)?.shape === 'icon'))
+  const inScreen = sel.type === 'node' && deviceOf(state.nodes.get(sel.id)?.group);
+  if (!(sel.type === 'node' && state.nodes.get(sel.id)?.shape === 'icon') && !inScreen)
     out += `<rect class="handle" data-resize="${sel.type}:${esc(sel.id)}" x="${b.x + b.w / 2 - hs / 2}" y="${b.y + b.h / 2 - hs / 2}" width="${hs}" height="${hs}" rx="${2 / k}"/>`;
   return out;
 }
@@ -1032,7 +1174,7 @@ function fit() {
   const x0 = Math.min(...all.map(b => b.x - b.w / 2)), x1 = Math.max(...all.map(b => b.x + b.w / 2));
   const y0 = Math.min(...all.map(b => b.y - b.h / 2)), y1 = Math.max(...all.map(b => b.y + b.h / 2));
   // Leave room for the rail on the left, the bar on top and the request box at the bottom.
-  const L = 64, R = 20, T = 64, B = 76;
+  const L = 64, R = 20, T = $('#note').hidden ? 64 : 112, B = 76;
   const k = Math.min(1.4, (W - L - R) / (x1 - x0 || 1), (H - T - B) / (y1 - y0 || 1));
   view = { k, x: L + (W - L - R) / 2 - (x0 + x1) / 2 * k, y: T + (H - T - B) / 2 - (y0 + y1) / 2 * k };
   render();
@@ -1354,8 +1496,10 @@ const GRID = 10;
 let spaceDown = false;
 function startMove(p, single) {
   const it = selectionItems();
-  const ids = [...it.nodes];
-  const rects = [...it.groups].filter(g => state.pos.get(g)?.w).map(g => ({ id: g, p: state.pos.get(g) }));
+  // A screen moves as one: its pieces follow it through the layout instead of being moved one by one.
+  for (const g of it.groups) if (deviceOf(g) && state.pos.get(g)?.x == null) { const gb = groupBoxes.get(g); state.pos.set(g, { ...state.pos.get(g), x: gb.x, y: gb.y }); }
+  const ids = [...it.nodes].filter(id => !(it.groups.has(state.nodes.get(id).group) && deviceOf(state.nodes.get(id).group)) || state.pos.has(id));
+  const rects = [...it.groups].filter(g => state.pos.get(g)?.w || deviceOf(g)).map(g => ({ id: g, p: state.pos.get(g) }));
   const inks = state.ink.filter(k => it.ink.has(k.id)).map(k => ({ k, pts: k.pts.map(q => [...q]) }));
   const notes = state.comments.filter(c => it.comments.has(c.id)).map(c => ({ c, x: c.x, y: c.y }));
   const b0 = keysBox(selKeys());
@@ -1388,7 +1532,7 @@ svg.addEventListener('pointerdown', e => {
   if (tool !== 'select' && !markMode) { e.preventDefault(); placeItem(tool, p); return; }
   let key = keyAt(e.target) || 'empty';
   // A frame is picked up by its title bar; its inside behaves like the empty board, as in Miro.
-  if (key.startsWith('g:') && !isSel(key)) { const gb = groupBoxes.get(splitKey(key)[1]); if (gb && p.y > gb.y - gb.h / 2 + 30) key = 'empty'; }
+  if (key.startsWith('g:') && !isSel(key)) { const gb = groupBoxes.get(splitKey(key)[1]); if (gb && p.y > gb.y - gb.h / 2 && !deviceOf(splitKey(key)[1])) key = 'empty'; }
   const now = performance.now();
   const isDouble = now - lastDown.t < 400 && key === lastDown.key && Math.hypot(e.clientX - lastDown.x, e.clientY - lastDown.y) < 6;
   lastDown = isDouble ? { t: 0, key: '' } : { t: now, key, x: e.clientX, y: e.clientY };
@@ -1414,6 +1558,55 @@ svg.addEventListener('pointerdown', e => {
   }
   svg.setPointerCapture(e.pointerId);
 });
+
+// A piece dropped on a screen goes into its stack, above the first piece below where it was dropped.
+function stackInto(n, gid, y) {
+  const was = n.group;
+  const sibs = [...state.nodes.values()].filter(x => x.group === gid && x !== n).sort((a, b) => boxes.get(a.id).y - boxes.get(b.id).y);
+  const before = sibs.find(x => boxes.get(x.id).y > y);
+  n.group = gid; state.pos.delete(n.id);
+  // The stack follows the order of the boxes, so move this one in front of the piece it goes above.
+  const entries = [...state.nodes].filter(([id]) => id !== n.id);
+  const at = before ? entries.findIndex(([id]) => id === before.id) : entries.length;
+  entries.splice(at < 0 ? entries.length : at, 0, [n.id, n]);
+  state.nodes = new Map(entries);
+  commit('board', was === gid ? `Moved ${n.id} in ${state.groups.get(gid).title}` : `Put ${n.id} on ${state.groups.get(gid).title}`);
+}
+
+// New screens: a device with a starting set of pieces.
+const SCREEN_PRESETS = {
+  blank: { name: 'Blank', pieces: () => [['uiTopbar', 'Title']] },
+  login: { name: 'Login', pieces: () => [['uiImage', ''], ['uiHeading', 'Sign in'], ['uiInput', 'Email'], ['uiInput', 'Password'], ['uiButton', 'Sign in'], ['uiLink', 'Forgot password?']] },
+  main: { name: 'Main page', pieces: dev => dev === 'desktop'
+    ? [['uiTopbar', 'Home'], ['uiSidebar', 'Home\nSearch\nSaved\nSettings'], ['uiHeading', 'Welcome back'], ['uiInput', 'Search'], ['uiImage', ''], ['uiText', '']]
+    : [['uiTopbar', 'Home'], ['uiHeading', 'Where to today?'], ['uiInput', 'Search'], ['uiImage', ''], ['uiText', ''], ['uiTabbar', 'Home\nSearch\nProfile']] },
+};
+const PIECE_IDS = { uiTopbar: 'bar', uiHeading: 'title', uiText: 'text', uiInput: 'field', uiButton: 'btn', uiLink: 'link', uiCheckbox: 'check', uiImage: 'img', uiList: 'list', uiTable: 'grid', uiTabbar: 'tabs', uiSidebar: 'menu' };
+let screenPreset = 'main';
+function placeScreen(dev, p = viewCentre()) {
+  setTool('select');
+  pushUndo(); pinAll();
+  const P = SCREEN_PRESETS[screenPreset];
+  const gid = freeId('screen');
+  state.groups.set(gid, { id: gid, title: screenPreset === 'blank' ? 'Screen' : P.name, parent: null, marked: false, dev });
+  state.pos.set(gid, { x: p.x, y: p.y });
+  for (const [kind, label] of P.pieces(dev)) { const id = freeId(PIECE_IDS[kind]); state.nodes.set(id, { id, label, shape: kind, group: gid, marked: false }); }
+  sel = { type: 'group', id: gid };
+  commit('board', `Added a ${DEVICES[dev].name.toLowerCase()} screen`);
+}
+// A new piece goes at the bottom of the selected screen, or of the screen in the middle of the view.
+function addPiece(kind) {
+  closePops();
+  const c = viewCentre();
+  const gid = sel?.type === 'group' && deviceOf(sel.id) ? sel.id : sel?.type === 'node' && deviceOf(state.nodes.get(sel.id)?.group) ? state.nodes.get(sel.id).group
+    : [...groupBoxes].find(([g, b]) => deviceOf(g) && Math.abs(c.x - b.x) < b.w / 2 && Math.abs(c.y - b.y) < b.h / 2)?.[0];
+  pushUndo();
+  const id = freeId(PIECE_IDS[kind]);
+  state.nodes.set(id, { id, label: UI_KINDS[kind].def, shape: kind, group: gid || null, marked: false });
+  if (!gid) { pinAll(); state.pos.set(id, { x: c.x, y: c.y, w: 200, h: UI_KINDS[kind].h || 40 }); }
+  sel = { type: 'node', id };
+  commit('board', `Added ${UI_KINDS[kind].name.toLowerCase()}${gid ? ` to ${state.groups.get(gid).title}` : ''}`);
+}
 
 function eraseAt(e) {
   const k = keyAt(doc().elementFromPoint(e.clientX, e.clientY) || svg);
@@ -1464,6 +1657,7 @@ svg.addEventListener('pointermove', e => {
     Object.assign(boxes.get(id), pos);
   });
   for (const r of drag.rects) state.pos.set(r.id, { ...r.p, x: r.p.x + dx, y: r.p.y + dy });
+  if (drag.rects.some(r => deviceOf(r.id))) layout();
   for (const { k, pts } of drag.inks) k.pts = pts.map(([x, y]) => [x + dx, y + dy]);
   for (const n of drag.notes) { n.c.x = n.x + dx; n.c.y = n.y + dy; }
   if (!drag.single) computeGroupBoxes();
@@ -1516,6 +1710,7 @@ svg.addEventListener('pointerup', e => {
     if (d.single) {
       const n = state.nodes.get(d.single), b = boxes.get(n.id);
       const into = groupAt(b, new Set([n.id]));
+      if (isUi(n) && deviceOf(into)) { stackInto(n, into, b.y); return; }
       if (into !== n.group) {
         const was = n.group;
         // A frame left empty stays where it was, as an empty frame.
@@ -1609,7 +1804,11 @@ function placeItem(kind, p, { shape = toolShape, icon = null, edit = true, quiet
 }
 
 // Drawing by hand keeps everything else where it is: the automatic layout would move boxes around.
-function pinAll() { for (const [id, b] of boxes) if (!state.pos.has(id)) state.pos.set(id, { x: b.x, y: b.y }); }
+// Pieces of a screen stay in their screen's stack; the screen itself is pinned.
+function pinAll() {
+  for (const [id, b] of boxes) if (!state.pos.has(id) && !deviceOf(state.nodes.get(id)?.group)) state.pos.set(id, { x: b.x, y: b.y });
+  for (const [gid, b] of groupBoxes) if (deviceOf(gid) && state.pos.get(gid)?.x == null) state.pos.set(gid, { ...state.pos.get(gid), x: b.x, y: b.y });
+}
 
 // The middle of what the board shows, in board coordinates.
 function viewCentre() {
@@ -1634,7 +1833,7 @@ function openEditor(target) {
     const c = state.comments.find(x => x.id === target.id); if (!c) return;
     text = c.text; b = { x: c.x + 18 + 120, y: c.y + 20, w: 240, h: 70 };
   }
-  else if (target.type === 'group') { text = state.groups.get(target.id).title; const g = groupBoxes.get(target.id); b = { x: g.x, y: g.y - g.h / 2 + 18, w: Math.max(160, g.w * 0.6), h: 30 }; }
+  else if (target.type === 'group') { text = state.groups.get(target.id).title; const g = groupBoxes.get(target.id), w = Math.max(160, Math.min(g.w, 320)); b = { x: g.x - g.w / 2 + w / 2, y: g.y - g.h / 2 - 12, w, h: 26 }; }
   else {
     const e = state.edges[target.i], a = anchorBox(e.from), c = anchorBox(e.to);
     text = e.label; b = { x: (a.x + c.x) / 2, y: (a.y + c.y) / 2, w: 160, h: 30 };
@@ -2133,6 +2332,52 @@ const TEMPLATES = [
   raw --> dbx
   dbx --> curated
   curated ==> bi` },
+  { cat: 'Screens', id: 'login', name: 'Mobile login flow', desc: 'Five phone screens and how they link', tint: '#eef1ff', code: `flowchart LR
+  subgraph splash[Splash]
+    sp_logo[" "]:::uiImage
+    sp_h["Field inspections"]:::uiHeading
+    sp_t["Inspect, score and report on site."]:::uiText
+    sp_go["Get started"]:::uiButton
+  end
+  subgraph signin["Sign in"]
+    si_bar["Sign in"]:::uiTopbar
+    si_h["Welcome back"]:::uiHeading
+    si_email["Email"]:::uiInput
+    si_pass["Password"]:::uiInput
+    si_rem["Remember me"]:::uiCheckbox
+    si_btn["Sign in"]:::uiButton
+    si_sso["Continue with Microsoft"]:::uiButton
+    si_forgot["Forgot password?"]:::uiLink
+  end
+  subgraph verify["Verify code"]
+    ve_bar["Verify"]:::uiTopbar
+    ve_t["We sent a 6-digit code to your email."]:::uiText
+    ve_code["6-digit code"]:::uiInput
+    ve_btn["Verify"]:::uiButton
+    ve_resend["Resend code"]:::uiLink
+  end
+  subgraph home[Home]
+    ho_bar["Inspections"]:::uiTopbar
+    ho_h["Today"]:::uiHeading
+    ho_list["Warehouse 3<br>Office block B<br>Site 14"]:::uiList
+    ho_tabs["Home<br>Map<br>Profile"]:::uiTabbar
+  end
+  subgraph reset["Reset password"]
+    re_bar["Reset password"]:::uiTopbar
+    re_t["Enter your email and we'll send a link."]:::uiText
+    re_email["Email"]:::uiInput
+    re_btn["Send link"]:::uiButton
+  end
+  class splash,signin,verify,home,reset phone
+  sp_go -->|① Get started| signin
+  si_btn -->|② signs in| verify
+  si_sso -.->|② SSO| home
+  ve_btn -->|③ code ok| home
+  si_forgot -.->|forgot| reset
+  re_btn -.->|link sent| signin
+  style si_btn fill:#4262ff
+  style sp_go fill:#4262ff
+  style ve_btn fill:#4262ff` },
   { cat: 'Process', id: 'flow', name: 'Approval flowchart', desc: 'Shapes, decisions and colours', tint: '#fbf3dc', code: `flowchart TD
   start([Expense submitted]) --> check{Over 500 EUR?}
   check -->|No| auto[Auto-approve]
@@ -2200,6 +2445,7 @@ function openPop(name, { target = null } = {}) {
   pop.hidden = false;
   for (const b of doc().querySelectorAll('#rail [data-pop]')) b.setAttribute('aria-expanded', String(b.dataset.pop === name));
   if (name === 'template') paintTemplates();
+  if (name === 'screen') paintScreenPop();
   if (name === 'draw') { if (!['pen', 'hl', 'arrow', 'eraser'].includes(tool)) setTool('pen'); pop.hidden = false; paintDrawColors(); }
   if (name === 'icon') { iconTarget = target; loadIcons(); renderIconGrid(); $('#icon-q').focus(); }
 }
@@ -2249,7 +2495,7 @@ function renderCtx() {
     const a = anchorBox(e.from), c = anchorBox(e.to); if (!a || !c) { el.hidden = true; return; }
     const mid = edgeGeometry(e, a, c).at(0.5);
     b = { x: mid.x, y: mid.y, w: 0, h: 0 };
-    const route = e.route || 'straight';
+    const route = routeOf(e);
     html = `<select data-line-type title="Line type"><option value="">Line type…</option>${Object.entries(LINE_TYPES).map(([k, t]) => `<option value="${k}">${t.name}</option>`).join('')}</select><span class="ctx-sep"></span>` +
       ['straight', 'curved', 'elbow'].map(r => `<button data-route="${r}" aria-pressed="${route === r}" title="${r[0].toUpperCase() + r.slice(1)} line">${glyph(r)}</button>`).join('') +
       '<span class="ctx-sep"></span>' +
@@ -2281,8 +2527,14 @@ function renderCtx() {
     const isIcon = item.shape === 'icon', isImage = item.shape === 'image';
     const c = colorsOf(item);
     const cur = Math.max(0, PALETTE.findIndex(p => p.fill && (item.shape === 'text' ? p.stroke === c.color : p.fill === c.fill)));
-    const swatches = isIcon || isImage ? '' : sw(PALETTE.map(p => ({ ...p, fill: p.fill || (item.shape === 'sticky' ? STICKY.fill : null) })), cur, 'data-color', 'var(--node)') + '<span class="ctx-sep"></span>';
-    const pick = sel.type === 'group'
+    const swatches = isIcon || isImage || item.dev ? '' : isUi(item)
+      ? sw([{ name: 'Grey', fill: null }, ...PALETTE.slice(1).map(p => ({ name: p.name, fill: p.stroke }))], Math.max(0, PALETTE.findIndex(p => p.stroke === c.fill)), 'data-color', '#5f6470') + '<span class="ctx-sep"></span>'
+      : sw(PALETTE.map(p => ({ ...p, fill: p.fill || (item.shape === 'sticky' ? STICKY.fill : null) })), cur, 'data-color', 'var(--node)') + '<span class="ctx-sep"></span>';
+    const pick = sel.type === 'group' && item.dev
+      ? `<select data-device-pick title="Device">${Object.entries(DEVICES).map(([k, d]) => `<option value="${k}"${item.dev === k ? ' selected' : ''}>${d.name}</option>`).join('')}</select>` +
+        `<select data-piece-add title="Add a piece to this screen"><option value="">Add a piece…</option>${Object.entries(UI_KINDS).map(([k, u]) => `<option value="${k}">${u.name}</option>`).join('')}</select>`
+      : isUi(item) ? `<select data-piece-kind title="Kind of piece">${Object.entries(UI_KINDS).map(([k, u]) => `<option value="${k}"${item.shape === k ? ' selected' : ''}>${u.name}</option>`).join('')}</select>`
+      : sel.type === 'group'
       ? `<select data-zone-pick title="What kind of boundary">${[['', 'Plain frame'], ...Object.entries(ZONES).map(([k, z]) => [k, z.name])].map(([v, t]) => `<option value="${v}"${(zoneOf(item) || '') === v ? ' selected' : ''}>${t}</option>`).join('')}</select>`
       : isIcon ? '<button data-swap-icon title="Pick another icon">Change icon</button>'
       : isImage ? '' : `<select data-shape-pick title="Shape">${SHAPE_NAMES.map(([v, t]) => `<option value="${v}"${item.shape === v ? ' selected' : ''}>${t}</option>`).join('')}</select>`;
@@ -2293,7 +2545,7 @@ function renderCtx() {
   el.hidden = false;
   const wrap = $('.board-wrap').getBoundingClientRect();
   const w = el.offsetWidth, h = el.offsetHeight;
-  const gap = sel.type === 'node' ? 28 : 14;
+  const gap = sel.type === 'node' ? 28 : sel.type === 'group' ? FRAME_TITLE + 12 : 14;
   let left = view.x + b.x * view.k - w / 2, top = view.y + (b.y - b.h / 2) * view.k - h - gap;
   if (top < 60) top = view.y + (b.y + b.h / 2) * view.k + gap;
   left = Math.max(8, Math.min(wrap.width - w - 8, left));
@@ -2303,6 +2555,7 @@ function renderCtx() {
 
 function paint(item, p) {
   if (!p.fill) { delete item.style; if (item.cls) delete item.cls; }
+  else if (isUi(item)) item.style = { fill: p.stroke };
   else if (item.shape === 'text') item.style = { color: p.stroke };
   else if (item.shape === 'sticky') item.style = { fill: p.fill };
   else if (item.shape !== 'icon' && item.shape !== 'image') item.style = { fill: p.fill, stroke: p.stroke };
@@ -2337,7 +2590,7 @@ function ctxClick(e) {
   if (t.dataset.markitem != null) return toggleMark(item, sel.type === 'node' ? 'box' : 'group');
   if (t.dataset.swapIcon != null) return openPop('icon', { target: sel.id });
   pushUndo();
-  if (t.dataset.route) { if (t.dataset.route === 'straight') delete item.route; else item.route = t.dataset.route; }
+  if (t.dataset.route) { if (t.dataset.route === 'curved') delete item.route; else item.route = t.dataset.route; }
   if (t.dataset.estyle) item.style = t.dataset.estyle;
   if (t.dataset.arrow != null) item.arrow = !item.arrow;
   if (t.dataset.ecolor != null) { const c = EDGE_COLORS[+t.dataset.ecolor].fill; if (c) item.color = c; else delete item.color; }
@@ -2345,6 +2598,12 @@ function ctxClick(e) {
 }
 
 function ctxChange(e) {
+  const dv = e.target.closest('[data-device-pick]');
+  if (dv && sel?.type === 'group') { const g = state.groups.get(sel.id); pushUndo(); g.dev = dv.value; const p = state.pos.get(g.id); if (p?.w) { delete p.w; delete p.h; } commit('board', `Made ${g.title} a ${DEVICES[dv.value].name.toLowerCase()} screen`); return; }
+  const pa = e.target.closest('[data-piece-add]');
+  if (pa && pa.value) { addPiece(pa.value); return; }
+  const pk = e.target.closest('[data-piece-kind]');
+  if (pk && sel?.type === 'node') { const n = state.nodes.get(sel.id); pushUndo(); if (n.label === UI_KINDS[n.shape]?.def) n.label = UI_KINDS[pk.value].def; n.shape = pk.value; commit('board', `Made ${n.id} a ${UI_KINDS[pk.value].name.toLowerCase()}`); return; }
   const lt = e.target.closest('[data-line-type]');
   if (lt && sel?.type === 'edge') { if (lt.value) applyLineType(state.edges[sel.i], lt.value); return; }
   const z = e.target.closest('[data-zone-pick]');
@@ -2526,6 +2785,7 @@ The diagram is a Mermaid flowchart, and always the whole diagram, never only the
 - For a flow, start the link labels with ① ② ③ in order: a -->|① signs in| b.
 - Cloud services as icons: kv@{ icon: "azure:key-vaults", label: "Secrets" }. Prefixes azure:, pp: (Power Platform), d365: (Dynamics 365); the name is the product name in lower case with dashes, e.g. azure:app-services, azure:sql-database, azure:function-apps, azure:entra-id, pp:power-automate, d365:sales.
 - Sticky notes: n1["A note"]:::sticky. Plain text: t1@{ shape: text, label: "A heading" }.
+- UI screens and mockups: one subgraph per screen, then class signin,home phone (or tablet, desktop). Inside, the pieces stack from the top in the order you write them: si_bar["Sign in"]:::uiTopbar, si_h["Welcome back"]:::uiHeading, si_t["Some text"]:::uiText, si_mail["Email"]:::uiInput (the label is the placeholder), si_go["Sign in"]:::uiButton, si_forgot["Forgot password?"]:::uiLink, si_keep["Remember me"]:::uiCheckbox, si_pic[" "]:::uiImage, ho_list["Item one<br>Item two"]:::uiList, ho_tabs["Home<br>Search<br>Profile"]:::uiTabbar (always at the bottom), ho_grid["Name | Status"]:::uiTable, ho_menu["Home<br>Settings"]:::uiSidebar. Link a button to the screen it opens: si_go --> home. style si_go fill:#4262ff makes the main button blue.
 - Colours: style web fill:#dbeafe,stroke:#2563eb (fill, stroke and color only), or classDef blue fill:#dbeafe,stroke:#2563eb plus class web,api blue.
 - Keep the ids the diagram already has. "class x marked" means I highlighted x: my request is about those.
 
@@ -2815,7 +3075,7 @@ function exportDrawio() {
   }
   state.edges.forEach((e, i) => {
     if (!anchorBox(e.from) || !anchorBox(e.to)) return;
-    const style = `${e.route === 'elbow' ? 'edgeStyle=orthogonalEdgeStyle;rounded=1;' : e.route === 'curved' ? 'curved=1;' : 'edgeStyle=none;'}html=1;endArrow=${e.arrow ? 'classic' : 'none'};` +
+    const style = `${e.route === 'elbow' ? 'edgeStyle=orthogonalEdgeStyle;rounded=1;' : routeOf(e) === 'curved' ? 'curved=1;' : 'edgeStyle=none;'}html=1;endArrow=${e.arrow ? 'classic' : 'none'};` +
       `${e.style === 'dotted' ? 'dashed=1;' : ''}${e.style === 'thick' ? 'strokeWidth=3;' : ''}${e.color ? `strokeColor=${e.color};` : ''}`;
     cells.push(`<mxCell id="e${i}" value="${xmlEsc(e.label)}" style="${style}" edge="1" parent="1" source="${cid(e.from)}" target="${cid(e.to)}"><mxGeometry relative="1" as="geometry"/></mxCell>`);
   });
@@ -2954,6 +3214,16 @@ function paintToggles() {
   $('#menu-minimap').setAttribute('aria-checked', String(miniOn));
 }
 $('#btn-redo').addEventListener('click', redo);
+function paintScreenPop() {
+  $('#screen-presets').innerHTML = Object.entries(SCREEN_PRESETS).map(([k, p]) => `<button role="radio" data-preset="${k}" aria-checked="${k === screenPreset}">${p.name}</button>`).join('');
+  $('#piece-list').innerHTML = Object.entries(UI_KINDS).map(([k, u]) => `<button data-piece="${k}">${u.name}</button>`).join('');
+}
+$('#screen-pop').addEventListener('click', e => {
+  const pr = e.target.closest('[data-preset]'), dv = e.target.closest('[data-device]'), pc = e.target.closest('[data-piece]');
+  if (pr) { screenPreset = pr.dataset.preset; paintScreenPop(); }
+  if (dv) { closePops(); placeScreen(dv.dataset.device); }
+  if (pc) addPiece(pc.dataset.piece);
+});
 $('#draw-pop').addEventListener('click', e => {
   const t = e.target.closest('[data-tool]'), c = e.target.closest('[data-pen-color]');
   if (t) { setTool(t.dataset.tool); paintDrawColors(); $('#draw-pop').hidden = false; return; }

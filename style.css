@@ -452,3 +452,64 @@ body.floating .minimap { display: none; }
 .node.image.sel .image-frame { stroke: var(--accent); stroke-width: 2; }
 .group { cursor: default; }
 .group text { cursor: grab; }
+
+/* ---------- frames like orim: title above, white body ---------- */
+.group rect { fill: var(--nf, var(--group)); stroke: var(--ns, var(--group-stroke)); stroke-width: 1.2; stroke-dasharray: none; }
+.group text.group-title { font: 600 12.5px var(--font); fill: var(--ns, var(--muted)); cursor: grab; }
+.group.zone text.group-title { fill: var(--ns, var(--muted)); }
+.group.sel rect { stroke: var(--accent); stroke-width: 2; }
+:root { --group: #ffffff; --group-stroke: #dfe2e8; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --group: rgba(255, 255, 255, .04); --group-stroke: #3a3f48; } }
+:root[data-theme="dark"] { --group: rgba(255, 255, 255, .04); --group-stroke: #3a3f48; }
+
+/* ---------- screens: device frames and wireframe pieces (always light, like a real screen) ---------- */
+.screen { cursor: grab; }
+.group.screen .device-frame { fill: #ffffff; stroke: #1a1a1a; stroke-width: 2.2; filter: drop-shadow(0 2px 6px rgba(16, 24, 40, .12)); }
+.group.screen .device-frame.sel { stroke: var(--accent); }
+.group.screen .device-notch { fill: #1a1a1a; stroke: none; }
+.group.screen .device-home { fill: #1a1a1a; opacity: .7; }
+.device-bar { stroke: #dee2e6; stroke-width: 1; fill: none; }
+.device-dot { fill: #ced4da; }
+.group.screen .device-url { fill: #f1f3f5; stroke: none; }
+.group.screen .device-home { stroke: none; }
+.node.ui .node-shape { display: none; }
+.node.ui { cursor: grab; }
+.node.ui .ui-hit { fill: transparent; }
+.node.ui .ui-t { font-family: var(--font); fill: #343a40; }
+.node.ui .ui-title { font-size: 11px; font-weight: 600; }
+.node.ui .ui-h { font-size: 14px; font-weight: 700; fill: #1a1a1a; }
+.node.ui .ui-p { font-size: 11px; }
+.node.ui .ui-p.on { font-weight: 600; fill: #1a1a1a; }
+.node.ui .ui-ph { font-size: 10.5px; fill: #adb5bd; }
+.node.ui .ui-cap { font-size: 10.5px; fill: #868e96; }
+.node.ui .ui-th { font-size: 10px; font-weight: 600; fill: #495057; }
+.node.ui .ui-btn { fill: #5f6470; }
+.node.ui .ui-btn-t { font-size: 11px; font-weight: 600; fill: #ffffff; }
+.node.ui .ui-link { font-size: 10.5px; fill: #4262ff; text-decoration: underline; }
+.node.ui .ui-input { fill: #ffffff; stroke: #ced4da; stroke-width: 1; }
+.node.ui .ui-bar { fill: #dee2e6; }
+.node.ui .ui-top { fill: #f8f9fa; }
+.node.ui .ui-tab { fill: #ffffff; }
+.node.ui .ui-line { stroke: #e9ecef; stroke-width: 1; fill: none; }
+.node.ui .ui-ico { stroke: #868e96; stroke-width: 1.4; fill: none; stroke-linecap: round; stroke-linejoin: round; }
+.node.ui .ui-avatar { fill: #dee2e6; }
+.node.ui .ui-img { fill: #f1f3f5; stroke: #dee2e6; }
+.node.ui .ui-img-x { stroke: #dee2e6; stroke-width: 1; }
+.node.ui .ui-dot { fill: #ced4da; }
+.node.ui .ui-dot.on { fill: #4262ff; }
+.node.ui .ui-tab-t { font-size: 8.5px; fill: #868e96; }
+.node.ui .ui-tab-t.on { fill: #1a1a1a; font-weight: 600; }
+.node.ui .ui-side-on { fill: #e7ebff; }
+.node.ui.sel .ui-hit, .node.ui.sel .ui-input, .node.ui.sel .ui-btn, .node.ui.sel .ui-img, .node.ui.sel .ui-top, .node.ui.sel .ui-tab { stroke: var(--accent); stroke-width: 1.6; }
+.node.ui.marked .ui-hit, .node.ui.marked .ui-img, .node.ui.marked .ui-input { fill: var(--mark); stroke: var(--mark-stroke); }
+.screen-pop { width: 280px; display: flex; flex-direction: column; gap: 6px; }
+.screen-pop .pop-label { padding: 4px 4px 0; }
+.seg { display: flex; gap: 2px; background: var(--bg); border-radius: 8px; padding: 2px; }
+.seg button { flex: 1; border: 0; background: none; font-size: 12px; padding: 5px 6px; border-radius: 6px; }
+.seg button[aria-checked="true"] { background: var(--surface); box-shadow: var(--shadow); font-weight: 600; }
+.screen-devs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; }
+.screen-devs button { display: flex; flex-direction: column; align-items: center; gap: 2px; border: 0; background: none; font-size: 11.5px; padding: 6px 2px; }
+.screen-devs button:hover, .piece-list button:hover { background: var(--accent-soft); }
+.screen-devs svg { width: 34px; height: 34px; fill: none; stroke: currentColor; stroke-width: 1.5; }
+.piece-list { display: grid; grid-template-columns: 1fr 1fr; gap: 2px; }
+.piece-list button { border: 0; background: none; font-size: 12px; padding: 5px 8px; text-align: left; }
