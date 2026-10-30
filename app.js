@@ -19,6 +19,12 @@ const state = { dir: 'LR', nodes: new Map(), groups: new Map(), edges: [], pos: 
 // Shapes Mermaid lacks, written as a class on a plain box (n1["…"]:::sticky); their content lives in canvas lines.
 const CLASS_SHAPES = new Set(['sticky', 'table', 'doc', 'phone', 'browser', 'image', 'uiTopbar', 'uiHeading', 'uiText', 'uiInput', 'uiButton', 'uiLink',
   'uiCheckbox', 'uiImage', 'uiList', 'uiTable', 'uiTabbar', 'uiSidebar']);
+// Short class names keep links short: n1["Email"]:::in is an input field. Both forms are read; the short one is written.
+const SHORT = { btn: 'uiButton', in: 'uiInput', input: 'uiInput', field: 'uiInput', h: 'uiHeading', head: 'uiHeading', t: 'uiText', txt: 'uiText',
+  link: 'uiLink', chk: 'uiCheckbox', check: 'uiCheckbox', img: 'uiImage', pic: 'uiImage', list: 'uiList', grid: 'uiTable', tbl: 'uiTable',
+  tabs: 'uiTabbar', bar: 'uiTopbar', top: 'uiTopbar', menu: 'uiSidebar', side: 'uiSidebar', note: 'sticky' };
+const SHORT_OUT = { uiButton: 'btn', uiInput: 'in', uiHeading: 'h', uiText: 't', uiLink: 'link', uiCheckbox: 'chk', uiImage: 'img', uiList: 'list', uiTable: 'grid', uiTabbar: 'tabs', uiTopbar: 'bar', uiSidebar: 'menu' };
+const shapeClass = c => SHORT[c] || (CLASS_SHAPES.has(c) ? c : null);
 // Canvas-line payloads are percent-encoded, since a line also ends at ;
 const enc = s => encodeURIComponent(s), dec = s => { try { return decodeURIComponent(s); } catch { return s; } };
 let boxes = new Map();       // node id -> {x, y, w, h, shape} (centre)
@@ -182,14 +188,20 @@ function parseInto(text, { replace, keep = true }) {
     if (!n) { n = { id: spec.id, label: spec.id, shape: 'box', group: null, marked: false, implicit: true }; state.nodes.set(spec.id, n); fresh.add(spec.id); }
     if (spec.shape) {
       if (spec.label) n.label = spec.label; else if (n.implicit) n.label = spec.id;
-      n.shape = spec.shape; n.icon = spec.icon || null; n.implicit = false;
+      // A changed label in plain brackets keeps what the box is: a note stays a note, a button a button.
+      const keepKind = !fresh.has(spec.id) && !n.implicit && spec.shape === 'box' && !spec.cls && shapeClass(n.shape);
+      if (!keepKind) { n.shape = spec.shape; n.icon = spec.icon || null; }
+      n.implicit = false;
     }
     const g = stack[stack.length - 1] || null;
     if (g && (fresh.has(spec.id) || spec.shape || !n.group)) n.group = g;
+    // In an update, a new box goes after the one named before it in the same frame.
+    if (g) { if (fresh.has(spec.id) && !replace && lastIn.has(g)) after.set(spec.id, lastIn.get(g)); lastIn.set(g, spec.id); }
     if (spec.cls === 'marked') n.marked = true;
-    else if (CLASS_SHAPES.has(spec.cls)) n.shape = spec.cls;
+    else if (shapeClass(spec.cls)) n.shape = shapeClass(spec.cls);
     else if (spec.cls) n.cls = spec.cls;
   };
+  const lastIn = new Map(), after = new Map();
   const pendRoute = new Map(), pendColor = new Map(), pendExtra = new Map();
   const extra = (id, k, v) => (pendExtra.get(id) || pendExtra.set(id, {}).get(id))[k] = v;
   const addEdge = (from, to, label, style, arrow) => {
@@ -230,7 +242,7 @@ function parseInto(text, { replace, keep = true }) {
     }
     if (!line || line.startsWith('%%')) continue;
     if ((m = line.match(/^(?:flowchart|graph)\s*(LR|RL|TD|TB|BT)?\s*$/i))) { state.dir = (m[1] || 'TD').toUpperCase().replace('TB', 'TD'); continue; }
-    if ((m = line.match(/^classDef\s+([\w-]+)\s+(.+)$/))) { if (m[1] !== 'marked' && !CLASS_SHAPES.has(m[1]) && !DEVICE_ALIAS[m[1].toLowerCase()]) state.classDefs.set(m[1], styleProps(m[2])); continue; }
+    if ((m = line.match(/^classDef\s+([\w-]+)\s+(.+)$/))) { if (m[1] !== 'marked' && !shapeClass(m[1]) && !DEVICE_ALIAS[m[1].toLowerCase()]) state.classDefs.set(m[1], styleProps(m[2])); continue; }
     if ((m = line.match(/^linkStyle\s+([\d\s,]+?)\s+(.+)$/))) {
       const st = styleProps(m[2]);
       if (st.stroke) for (const i of m[1].split(',')) pendColor.set(+i, st.stroke);
@@ -264,7 +276,7 @@ function parseInto(text, { replace, keep = true }) {
         if (!item) continue;
         if (m[2] === 'marked') item.marked = true;
         else if (item === state.groups.get(id) && DEVICE_ALIAS[m[2].toLowerCase()]) item.dev = DEVICE_ALIAS[m[2].toLowerCase()];
-        else if (CLASS_SHAPES.has(m[2])) { if (item === state.nodes.get(id)) item.shape = m[2]; }
+        else if (shapeClass(m[2])) { if (item === state.nodes.get(id)) item.shape = shapeClass(m[2]); }
         else item.cls = m[2];
       }
       continue;
@@ -320,6 +332,15 @@ function parseInto(text, { replace, keep = true }) {
     if (!e.color && keptRoutes.get(k)?.color) e.color = keptRoutes.get(k).color;
   }
   for (const [i, c] of pendColor) if (state.edges[i]) state.edges[i].color = c;
+  if (after.size) {
+    const entries = [...state.nodes];
+    for (const [id, prev] of after) {
+      const from = entries.findIndex(([k]) => k === id), [entry] = entries.splice(from, 1);
+      const at = entries.findIndex(([k]) => k === prev);
+      entries.splice(at + 1, 0, entry);
+    }
+    state.nodes = new Map(entries);
+  }
   for (const [id, x] of [...keptExtra, ...pendExtra]) {
     const item = itemById(id);
     if (item) for (const [k, v] of Object.entries(x)) if (v != null) item[k] = v;
@@ -336,14 +357,14 @@ function parseInto(text, { replace, keep = true }) {
 // A box or frame by id. A line to a frame first makes a placeholder box of that name; the frame wins over it.
 function itemById(id) { const n = state.nodes.get(id); return (n?.implicit && state.groups.get(id)) || n || state.groups.get(id); }
 
+// Removing a frame or screen removes what is inside it too, as in Miro.
 function removeItem(id) {
-  if (state.nodes.delete(id) || state.groups.has(id)) state.pos.delete(id);
   if (state.groups.has(id)) {
-    const g = state.groups.get(id);
-    for (const n of state.nodes.values()) if (n.group === id) n.group = g.parent;
-    for (const c of state.groups.values()) if (c.parent === id) c.parent = g.parent;
+    for (const n of [...state.nodes.values()]) if (n.group === id) removeItem(n.id);
+    for (const c of [...state.groups.values()]) if (c.parent === id) removeItem(c.id);
     state.groups.delete(id);
-  }
+  } else state.nodes.delete(id);
+  state.pos.delete(id);
   state.edges = state.edges.filter(e => e.from !== id && e.to !== id);
 }
 
@@ -379,8 +400,8 @@ function toMermaid() {
     phone: 'fill:#ffffff,stroke:#1a1a1a', browser: 'fill:#ffffff,stroke:#1a1a1a', image: 'fill:#f1f3f5,stroke:#868e96' };
   for (const k of Object.keys(UI_KINDS)) CLASS_LOOK[k] = k === 'uiButton' ? 'fill:#5f6470,stroke:#5f6470,color:#ffffff' : 'fill:#eceef2,stroke:#c4c8d0,color:#4b5160';
   for (const c of CLASS_SHAPES) {
-    const ids = [...state.nodes.values()].filter(n => n.shape === c).map(n => n.id);
-    if (ids.length) L.push(`  classDef ${c} ${CLASS_LOOK[c]}`, `  class ${ids.join(',')} ${c}`);
+    const ids = [...state.nodes.values()].filter(n => n.shape === c).map(n => n.id), name = SHORT_OUT[c] || c;
+    if (ids.length) L.push(`  classDef ${name} ${CLASS_LOOK[c]}`, `  class ${ids.join(',')} ${name}`);
   }
   for (const d of Object.keys(DEVICES)) {
     const ids = [...state.groups.values()].filter(g => g.dev === d).map(g => g.id);
@@ -549,6 +570,8 @@ function screenLayout(gid) {
 // screens line up along the flow instead of stacking. Within a block: break cycles, rank by longest path,
 // order each rank by its neighbours, then place ranks along the main axis.
 const FRAME_PAD = 20, FRAME_TITLE = 24;
+// A section: a top-level frame holding other frames or screens, such as one journey of several.
+const isSection = gid => { const g = state.groups.get(gid); return !!g && !g.parent && !g.dev && !ZONES[zoneOf(g)] && [...state.groups.values()].some(c => c.parent === gid); };
 let deviceRects = new Map();
 function layout() {
   const horiz = state.dir === 'LR' || state.dir === 'RL', flip = state.dir === 'RL' || state.dir === 'BT';
@@ -571,14 +594,68 @@ function layout() {
   const rel = new Map(), foot = new Map(), screens = new Map();
   const block = gid => {
     if (gid && deviceOf(gid)) { const sc = screenLayout(gid); screens.set(gid, sc); return { w: sc.w, h: sc.h }; }
-    const items = kidsOf(gid);
+    let items = kidsOf(gid);
     for (const id of items) {
       if (state.nodes.has(id)) foot.set(id, size.get(id));
       else { const b = block(id); foot.set(id, { w: b.w + (deviceOf(id) ? 0 : FRAME_PAD * 2), h: b.h + (deviceOf(id) ? 0 : FRAME_PAD * 2) + FRAME_TITLE }); }
     }
     if (!items.length) return { w: 160, h: 60 };
-    const set = new Set(items), out = new Map(items.map(id => [id, new Set()]));
-    for (const e of state.edges) { const a = itemAt(e.from, gid), b = itemAt(e.to, gid); if (a && b && a !== b && set.has(a) && set.has(b)) out.get(a).add(b); }
+    const all0 = items, set0 = new Set(all0), out = new Map(all0.map(id => [id, new Set()])), deg = new Map(all0.map(id => [id, 0]));
+    for (const e of state.edges) {
+      const a = itemAt(e.from, gid), b = itemAt(e.to, gid);
+      if (a && b && a !== b && set0.has(a) && set0.has(b)) { out.get(a).add(b); deg.set(a, deg.get(a) + 1); deg.set(b, deg.get(b) + 1); }
+    }
+    // On the board itself, sections (frames holding frames or screens) are rows in the order written,
+    // whatever links run between them; anything else on the board comes first, as a row of its own.
+    if (gid == null) {
+      const secs = all0.filter(isSection);
+      if (secs.length) {
+        const rest = all0.filter(id => !secs.includes(id));
+        const rows = [];
+        if (rest.length) {
+          const sub = new Set(rest), o2 = new Map(rest.map(id => [id, new Set([...out.get(id)].filter(v => sub.has(v)))]));
+          const hasLinks = [...o2.values()].some(v => v.size);
+          const r = hasLinks ? rankBlock(rest, o2) : wrapRow(rest, null);
+          rows.push({ ids: rest, w: r.w, h: r.h, inner: true });
+        }
+        for (const id of secs) rows.push({ ids: [id], w: foot.get(id).w, h: foot.get(id).h });
+        let y = 0, w = 0;
+        for (const row of rows) {
+          if (row.inner) for (const id of row.ids) { const r = rel.get(id); rel.set(id, { x: r.x, y: r.y + y }); }
+          else rel.set(row.ids[0], { x: row.w / 2, y: y + row.h / 2 });
+          y += row.h + 70; w = Math.max(w, row.w);
+        }
+        return { w, h: y - 70 };
+      }
+    }
+    // Items with no links at this level stay out of the flow: unlinked frames stack as rows (sections),
+    // and loose notes and text go in a strip under the flow instead of crowding its first column.
+    const loose = all0.filter(id => !deg.get(id)), linked = all0.filter(id => deg.get(id));
+    const allFrames = loose.every(id => state.groups.has(id));
+    if (!linked.length && !allFrames) return wrapRow(loose, null);
+    if (linked.length && loose.length) {
+      items = linked;
+      const flow = rankBlock(items, out);
+      return wrapRow(loose, flow);
+    }
+    return rankBlock(all0, out);
+  };
+  // Loose items in rows, left to right, under the flow (or on their own), wrapping at a sensible width.
+  const wrapRow = (ids, flow) => {
+    const gap = 30, area = ids.reduce((a, id) => a + foot.get(id).w * foot.get(id).h, 0);
+    const maxW = Math.max(flow ? flow.w : 0, 640, Math.sqrt(area) * 1.6);
+    let x = 0, y = flow ? flow.h + 60 : 0, rowH = 0, w = flow ? flow.w : 0;
+    for (const id of ids) {
+      const f = foot.get(id);
+      if (x > 0 && x + f.w > maxW) { x = 0; y += rowH + gap; rowH = 0; }
+      rel.set(id, { x: x + f.w / 2, y: y + f.h / 2 });
+      x += f.w + gap; rowH = Math.max(rowH, f.h); w = Math.max(w, x - gap);
+    }
+    return { w, h: y + rowH };
+  };
+  const rankBlock = (items, out) => {
+    const set = new Set(items);
+    for (const [k, vs] of out) for (const v of [...vs]) if (!set.has(k) || !set.has(v)) vs.delete(v);
     // Cycles broken by a depth-first walk; ranks by longest path.
     const seen = new Map(), dag = [];
     const visit = u => { seen.set(u, 1); for (const v of out.get(u)) { if (seen.get(v) === 1) continue; dag.push([u, v]); if (!seen.get(v)) visit(v); } seen.set(u, 2); };
@@ -618,7 +695,9 @@ function layout() {
       for (let i = 0; i < layer.length; i++) {
         const id = layer[i], ns = [...preds.get(id), ...succs.get(id)];
         if (!ns.length) continue;
-        const want = ns.reduce((a, n) => a + across.get(n), 0) / ns.length;
+        // Left to right, linked items line up by their top edges (rows of screens); top to bottom, by their middles.
+        const edge = n => horiz ? across.get(n) - cross(n) / 2 : across.get(n);
+        const want = ns.reduce((a, n) => a + edge(n), 0) / ns.length + (horiz ? cross(id) / 2 : 0);
         const lo = i ? across.get(layer[i - 1]) + (cross(layer[i - 1]) + cross(id)) / 2 + GAP_CROSS : -Infinity;
         const hi = i < layer.length - 1 ? across.get(layer[i + 1]) - (cross(layer[i + 1]) + cross(id)) / 2 - GAP_CROSS : Infinity;
         across.set(id, Math.max(lo, Math.min(hi, want)));
@@ -964,6 +1043,58 @@ function sideOf(b, toward, horiz) {
     : { x: b.x, y: b.y + Math.sign(dy || 1) * b.h / 2, nx: 0, ny: Math.sign(dy || 1) };
 }
 
+// What lines go around: boxes and whole screens, but not the line's own ends or the screens they sit on.
+let obstacles = [];
+function collectObstacles() {
+  obstacles = [];
+  for (const [id, b] of boxes) if (!deviceOf(state.nodes.get(id)?.group)) obstacles.push({ id, b });
+  for (const [gid, b] of groupBoxes) if (deviceOf(gid)) obstacles.push({ id: gid, b });
+}
+// A line that would cross boxes on its way goes around them instead: out of its side, along a lane just
+// above or below everything in the way, and back in, with rounded corners.
+function detour(e, s, t, at) {
+  const own = new Set([e.from, e.to, state.nodes.get(e.from)?.group, state.nodes.get(e.to)?.group]);
+  const inside = (p, b, m = 2) => Math.abs(p.x - b.x) < b.w / 2 - m && Math.abs(p.y - b.y) < b.h / 2 - m;
+  const cand = obstacles.filter(o => !own.has(o.id) && !inside(s, o.b, -4) && !inside(t, o.b, -4));
+  const samples = [...Array(15)].map((_, i) => at((i + 1) / 16));
+  let block = cand.filter(o => samples.some(p => inside(p, o.b)));
+  if (!block.length) return null;
+  const horiz = s.nx !== 0, out = 20;
+  const a0 = horiz ? { x: s.x + s.nx * out, y: s.y } : { x: s.x, y: s.y + s.ny * out };
+  const b0 = horiz ? { x: t.x + t.nx * out, y: t.y } : { x: t.x, y: t.y + t.ny * out };
+  const span = horiz ? [Math.min(a0.x, b0.x), Math.max(a0.x, b0.x)] : [Math.min(a0.y, b0.y), Math.max(a0.y, b0.y)];
+  const mid = horiz ? (s.y + t.y) / 2 : (s.x + t.x) / 2;
+  // Boxes a lane at v would run through, between the two ends.
+  const inLane = v => cand.filter(o => {
+    const c = horiz ? o.b.x : o.b.y, half = (horiz ? o.b.w : o.b.h) / 2, m = horiz ? o.b.y : o.b.x, mh = (horiz ? o.b.h : o.b.w) / 2;
+    return c + half > span[0] && c - half < span[1] && Math.abs(m - v) < mh + 12;
+  });
+  // Try just above and just below what is in the way; widen until the lane is clear.
+  let v = mid;
+  for (let k = 0; k < 8; k++) {
+    const lo = Math.min(...block.map(o => horiz ? o.b.y - o.b.h / 2 : o.b.x - o.b.w / 2)) - 24;
+    const hi = Math.max(...block.map(o => horiz ? o.b.y + o.b.h / 2 : o.b.x + o.b.w / 2)) + 24;
+    v = Math.abs(lo - mid) <= Math.abs(hi - mid) ? lo : hi;
+    const more = inLane(v).filter(o => !block.includes(o));
+    if (!more.length) break;
+    block = [...block, ...more];
+  }
+  const pts = horiz ? [s, a0, { x: a0.x, y: v }, { x: b0.x, y: v }, b0, t] : [s, a0, { x: v, y: a0.y }, { x: v, y: b0.y }, b0, t];
+  return { d: roundedPath(pts, 14), at: alongPolyline(pts), start: s };
+}
+function roundedPath(pts, r) {
+  let d = `M${pts[0].x},${pts[0].y}`;
+  for (let i = 1; i < pts.length - 1; i++) {
+    const p = pts[i], a = pts[i - 1], b = pts[i + 1];
+    const la = Math.hypot(p.x - a.x, p.y - a.y), lb = Math.hypot(b.x - p.x, b.y - p.y), k = Math.min(r, la / 2, lb / 2);
+    if (!k) { d += ` L${p.x},${p.y}`; continue; }
+    const p1 = { x: p.x + (a.x - p.x) * k / la, y: p.y + (a.y - p.y) * k / la }, p2 = { x: p.x + (b.x - p.x) * k / lb, y: p.y + (b.y - p.y) * k / lb };
+    d += ` L${p1.x},${p1.y} Q${p.x},${p.y} ${p2.x},${p2.y}`;
+  }
+  const l = pts[pts.length - 1];
+  return `${d} L${l.x},${l.y}`;
+}
+
 // Lines curve unless set straight or elbow, as in orim.
 const routeOf = e => e.route || 'curved';
 
@@ -990,6 +1121,8 @@ function edgeGeometry(e, a, b) {
       const v = 1 - u;
       return { x: v ** 3 * s.x + 3 * v * v * u * c1.x + 3 * v * u * u * c2.x + u ** 3 * t.x, y: v ** 3 * s.y + 3 * v * v * u * c1.y + 3 * v * u * u * c2.y + u ** 3 * t.y };
     };
+    const around = detour(e, s, t, at);
+    if (around) return around;
     return { d: `M${s.x},${s.y} C${c1.x},${c1.y} ${c2.x},${c2.y} ${t.x},${t.y}`, at, start: s };
   }
   if (e.route === 'elbow') {
@@ -1047,17 +1180,22 @@ function render() {
   for (const gid of [...groupBoxes.keys()].sort((a, b) => groupDepth(a) - groupDepth(b))) {
     const g = state.groups.get(gid), b = groupBoxes.get(gid);
     const Z = ZONES[zoneOf(g)];
-    const cls = ['group', Z && 'zone', g.marked && 'marked', isSel(`g:${gid}`) && 'sel'].filter(Boolean).join(' ');
+    // A section: a top-level frame holding other frames or screens, such as one journey of several.
+    const section = isSection(gid);
+    const cls = ['group', Z && 'zone', section && 'section', g.marked && 'marked', isSel(`g:${gid}`) && 'sel'].filter(Boolean).join(' ');
     const a = Z ? Z.stroke : accentOf(gid);
     const ic = Z?.icon && iconFor(Z.icon), x0 = b.x - b.w / 2, y0 = b.y - b.h / 2;
     // The title sits above the frame, as in Miro and orim; a screen draws its device instead of a frame.
-    const title = (ic ? `<image href="${ic.uri}" x="${x0}" y="${y0 - 19}" width="15" height="15"/>` : '') +
-      `<text class="group-title" x="${x0 + (ic ? 20 : 2)}" y="${y0 - 11}" dominant-baseline="central">${esc(g.title)}</text>`;
+    // Titles grow a little when zoomed out, so the overview stays readable.
+    const zs = Math.min(isSection(gid) ? 2.4 : 1.8, Math.max(1, 0.7 / view.k)), fs = (isSection(gid) ? 15 : 12.5) * zs;
+    const title = (ic ? `<image href="${ic.uri}" x="${x0}" y="${y0 - 8 - 11 * zs}" width="${15 * zs}" height="${15 * zs}"/>` : '') +
+      `<text class="group-title" x="${x0 + (ic ? 20 * zs : 2)}" y="${y0 - 11 * zs}" dominant-baseline="central" style="font-size:${fs}px">${esc(g.title)}</text>`;
     if (g.dev) { html += `<g class="${cls} screen" data-group="${esc(gid)}">${deviceSvg(g.dev, b, isSel(`g:${gid}`))}${title}</g>`; continue; }
     html += `<g class="${cls}" data-group="${esc(gid)}"${colorVars(g, a && { stroke: a, fill: `color-mix(in srgb, ${a} ${Z ? 5 : 9}%, transparent)` })}>` +
       `<rect x="${x0}" y="${y0}" width="${b.w}" height="${b.h}" rx="8"${Z ? ` style="stroke-dasharray:${Z.dash || 'none'}"` : ''}/>${title}</g>`;
   }
   // Labels already placed, and the boxes, so labels can step aside from them.
+  collectObstacles();
   // Labels step aside from boxes, screens and frame titles.
   const taken = [...boxes.values()].map(b => ({ x0: b.x - b.w / 2, x1: b.x + b.w / 2, y0: b.y - b.h / 2, y1: b.y + b.h / 2 }));
   for (const [gid, b] of groupBoxes) {
@@ -1074,16 +1212,19 @@ function render() {
     const marker = e.arrow ? ` marker-end="url(#${on ? 'arrow-sel' : arrowFor(e.color)})"` : '';
     let label = '';
     if (e.label) {
-      const text = e.label.replace(/\n/g, ' ');
-      const lw = textWidth(text, 12, 400) + 10, lh = 20;
+      // Pills that grow a little when zoomed out, so a label stays readable in the overview.
+      const text = e.label.replace(/\n/g, ' '), zs = Math.min(1.8, Math.max(1, 0.75 / view.k)), fs = 11.5 * zs;
+      const lw = textWidth(text, fs, 500) + 14 * zs, lh = 19 * zs;
       const rectAt = p => ({ x0: p.x - lw / 2, x1: p.x + lw / 2, y0: p.y - lh / 2, y1: p.y + lh / 2 });
       let p = at(0.5);
       for (const u of [0.5, 0.38, 0.62, 0.28, 0.72, 0.2, 0.8]) { const q = at(u); if (!hits(rectAt(q))) { p = q; break; } }
       taken.push(rectAt(p));
-      label = `<rect class="label-bg" x="${p.x - lw / 2}" y="${p.y - lh / 2}" width="${lw}" height="${lh}" rx="4"/>` +
-        `<text x="${p.x}" y="${p.y}" text-anchor="middle" dominant-baseline="central">${esc(text)}</text>`;
+      label = `<rect class="label-bg" x="${p.x - lw / 2}" y="${p.y - lh / 2}" width="${lw}" height="${lh}" rx="${lh / 2}"/>` +
+        `<text x="${p.x}" y="${p.y}" text-anchor="middle" dominant-baseline="central" style="font-size:${fs}px">${esc(text)}</text>`;
     }
-    html += `<g class="edge ${e.style}${on ? ' sel' : ''}" data-edge="${i}"${e.color ? ` style="--ec:${esc(e.color)}"` : ''}><path class="hit" d="${d}"/><path class="line" d="${d}"${marker}/>${label}</g>`;
+    // A dotted line without a head to or from a note is an annotation: thin and grey.
+    const noteLink = !e.arrow && [e.from, e.to].some(id => state.nodes.get(id)?.shape === 'sticky');
+    html += `<g class="edge ${e.style}${on ? ' sel' : ''}${noteLink ? ' note-link' : ''}" data-edge="${i}"${e.color ? ` style="--ec:${esc(e.color)}"` : ''}><path class="hit" d="${d}"/><path class="line" d="${d}"${marker}/>${label}</g>`;
   });
   html += state.ink.filter(k => k.kind === 'hl').map(inkSvg).join('');
   for (const [id, b] of boxes) {
@@ -1166,6 +1307,15 @@ function handlesSvg() {
 
 // Everything drawn on the board, as boxes: for fitting the view, the minimap and exports.
 function contentBoxes() { return [...boxes.values(), ...groupBoxes.values(), ...state.ink.map(inkBox), ...state.comments.map(commentBox)]; }
+
+// Zoom to a box (a screen, or the selection), leaving room for the bars.
+function zoomTo(b) {
+  const r = svg.getBoundingClientRect(), L = 64, R = 20, T = 64, B = 76;
+  const k = Math.min(2, (r.width - L - R) / (b.w + 40), (r.height - T - B) / (b.h + 60));
+  view = { k, x: L + (r.width - L - R) / 2 - b.x * k, y: T + (r.height - T - B) / 2 - b.y * k };
+  render();
+}
+function zoomToSelection() { const b = sel && (sel.type === 'edge' ? null : keysBox(selKeys())); if (b) zoomTo(b); else fit(); }
 
 function fit() {
   const all = contentBoxes();
@@ -1744,7 +1894,10 @@ function doubleClick(key, p) {
   const [kind, ...rest] = key.split(':'), ref = rest.join(':');
   if (kind === 'n') openEditor({ type: 'node', id: ref });
   else if (kind === 'e') openEditor({ type: 'edge', i: +ref });
-  else if (kind === 'g') openEditor({ type: 'group', id: ref });
+  else if (kind === 'g') {
+    const gb = groupBoxes.get(ref);
+    if (deviceOf(ref) && gb && p.y > gb.y - gb.h / 2) zoomTo(gb); else openEditor({ type: 'group', id: ref });
+  }
   else if (kind === 'c') openEditor({ type: 'comment', id: ref });
   else if (kind === 'i') select({ type: 'ink', id: ref });
   else placeItem('shape', p, { shape: 'box' });
@@ -2074,7 +2227,8 @@ onDoc('keydown', e => {
   else if (e.key === 'Escape') { select(null); setTool('select'); if (markMode) setMarkMode(false); }
   else if (mod || e.altKey) return;
   else if (e.key.toLowerCase() === 'm') setMarkMode(!markMode);
-  else if (e.key.toLowerCase() === 'f') fit();
+  else if (e.key.toLowerCase() === 'f' || (e.shiftKey && e.code === 'Digit1')) fit();
+  else if (e.shiftKey && e.code === 'Digit2') zoomToSelection();
   else if (e.key.toLowerCase() === 'v') setTool('select');
   else if (e.key.toLowerCase() === 'n') setTool('sticky');
   else if (e.key.toLowerCase() === 't') setTool('text');
@@ -2548,6 +2702,8 @@ function renderCtx() {
   const gap = sel.type === 'node' ? 28 : sel.type === 'group' ? FRAME_TITLE + 12 : 14;
   let left = view.x + b.x * view.k - w / 2, top = view.y + (b.y - b.h / 2) * view.k - h - gap;
   if (top < 60) top = view.y + (b.y + b.h / 2) * view.k + gap;
+  // No room above or below (the item fills the view): just under the top bar.
+  if (top > wrap.height - h - 80) top = 60;
   left = Math.max(8, Math.min(wrap.width - w - 8, left));
   top = Math.max(8, Math.min(wrap.height - h - 8, top));
   el.style.left = `${left}px`; el.style.top = `${top}px`;
@@ -2668,6 +2824,7 @@ async function copyText(text) {
 // The banner: the chat's line about what changed, and a warning when part of a link was unreadable.
 function showNote(note, warnings = []) {
   $('#note-text').textContent = note || 'Diagram updated';
+  $('#note-text').title = note || '';
   const w = $('#note-warn');
   w.hidden = !warnings.length;
   w.textContent = warnings.length ? `${warnings.length} ${warnings.length === 1 ? 'line' : 'lines'} couldn't be read. Ask ${ai().short} to send the link again.` : '';
@@ -2697,7 +2854,7 @@ function setAi(id) {
 
 function paintAi() {
   const a = ai();
-  $('#ai-badge').innerHTML = `<span class="ai-dot" style="background:${a.color}">${esc(a.short[0].toUpperCase())}</span>${esc(a.short)}`;
+  $('#ai-badge').innerHTML = `<span class="ai-dot" style="background:${a.color}">${esc(a.short[0].toUpperCase())}</span><span>${esc(a.short)}</span>`;
   $('#ai-chips').innerHTML = AIS.map(x => `<button type="button" role="radio" class="ai-chip" data-ai="${x.id}" aria-checked="${x.id === a.id}"><span class="ai-dot" style="background:${x.color}">${esc(x.short[0].toUpperCase())}</span>${esc(x.name)}</button>`).join('');
   $('#ai-menu').innerHTML = AIS.map(x => `<button type="button" role="menuitemradio" data-ai="${x.id}" aria-checked="${x.id === a.id}"><span class="ai-dot" style="background:${x.color}">${esc(x.short[0].toUpperCase())}</span>${esc(x.name)}</button>`).join('');
   $('#btn-start').textContent = `Start with ${a.short}`;
@@ -2767,29 +2924,34 @@ function chatMockup(a) {
 // ---------- texts for the assistant ----------
 
 // encodeURIComponent leaves ( ) ! * ' alone; encoding them too keeps chat apps from cutting the link short.
-const encodeLink = s => encodeURIComponent(s.replace(/\n\s*/g, ';')).replace(/[()!*']/g, c => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
+const encodeLink = s => encodeURIComponent(s.replace(/\n\s*/g, ';')).replace(/[()!*']/g, c => `%${c.charCodeAt(0).toString(16).toUpperCase()}`).replace(/%20/g, '+').replace(/%3A/g, ':').replace(/%3B/g, ';').replace(/%2C/g, ',');
 const FOOTER = 'Edit the board if you like, type your next request at its bottom, press Send, then paste here (Ctrl+V).';
 const exampleLink = () => `${BASE}#note=${encodeLink('Drew the web app and its API')}&m=${encodeLink('flowchart LR\nweb[Web app] -->|HTTPS| api[API]\napi --> db[(SQL)]')}`;
 
 const RULES = () => `Every reply has exactly three parts:
 1. One short line saying what you drew or changed.
-2. A Markdown link with the text "Open in Kiertotie" to ${BASE}#note=<your line>&m=<the whole diagram>
+2. A Markdown link with the text "Open in Kiertotie" to ${BASE}#note=<your line>&m=<the diagram>
 3. This line, word for word: "${FOOTER}"
 No other text, unless I ask a question.
 
-The diagram is a Mermaid flowchart, and always the whole diagram, never only the changes:
-- Start with flowchart LR (or flowchart TD for tall diagrams).
-- Short ids with the label in brackets: web[Web app]. Shapes: [box] (rounded) ([pill]) [(database)] ((circle)) {decision}.
-- Links: a --> b, with text a -->|HTTPS| b, dotted a -.-> b.
-- Boundaries: subgraph azure[Azure subscription] ... end. Name them by kind and they get their own look: Azure subscription, Resource group: <name>, Virtual network, Subnet, On-premises, DMZ, Power Platform environment, External system.
-- For a flow, start the link labels with ① ② ③ in order: a -->|① signs in| b.
-- Cloud services as icons: kv@{ icon: "azure:key-vaults", label: "Secrets" }. Prefixes azure:, pp: (Power Platform), d365: (Dynamics 365); the name is the product name in lower case with dashes, e.g. azure:app-services, azure:sql-database, azure:function-apps, azure:entra-id, pp:power-automate, d365:sales.
-- Sticky notes: n1["A note"]:::sticky. Plain text: t1@{ shape: text, label: "A heading" }.
-- UI screens and mockups: one subgraph per screen, then class signin,home phone (or tablet, desktop). Inside, the pieces stack from the top in the order you write them: si_bar["Sign in"]:::uiTopbar, si_h["Welcome back"]:::uiHeading, si_t["Some text"]:::uiText, si_mail["Email"]:::uiInput (the label is the placeholder), si_go["Sign in"]:::uiButton, si_forgot["Forgot password?"]:::uiLink, si_keep["Remember me"]:::uiCheckbox, si_pic[" "]:::uiImage, ho_list["Item one<br>Item two"]:::uiList, ho_tabs["Home<br>Search<br>Profile"]:::uiTabbar (always at the bottom), ho_grid["Name | Status"]:::uiTable, ho_menu["Home<br>Settings"]:::uiSidebar. Link a button to the screen it opens: si_go --> home. style si_go fill:#4262ff makes the main button blue.
-- Colours: style web fill:#dbeafe,stroke:#2563eb (fill, stroke and color only), or classDef blue fill:#dbeafe,stroke:#2563eb plus class web,api blue.
-- Keep the ids the diagram already has. "class x marked" means I highlighted x: my request is about those.
+Keep links short:
+- Your first diagram is the whole diagram, starting with flowchart LR (or flowchart TD for tall ones).
+- After that, send only the changes, without the flowchart line: new or changed lines, remove id, rename id: New label. The board keeps everything you don't mention. Send the whole diagram again only when I ask or when you rebuild it.
+- To add a piece to an existing screen or frame, name the piece it goes after first: subgraph si;si_pw;si_ph["Phone"]:::in;end
+- Short ids of 2 to 5 characters, and keep the ids the diagram already has.
 
-In the link, put ; between lines and percent-encode everything else, in the note too: space %20, > %3E, | %7C, [ %5B, ] %5D, ( %28, ) %29, { %7B, } %7D, " %22, & %26, # %23, : stays as it is. Example:
+The diagram is a Mermaid flowchart:
+- Boxes: web[Web app]. Shapes: [box] (rounded) ([pill]) [(database)] ((circle)) {decision}.
+- Links: a --> b, with text a -->|HTTPS| b, dotted a -.-> b. For a flow, start the labels with ① ② ③.
+- Sections: put each part of a bigger board, such as a journey or an area, in its own subgraph: subgraph asis["As-is: contacting YIT"] ... end. Sections stack as rows. Don't write separate heading texts.
+- Boundaries inside: subgraph rg["Resource group: prod"] ... end. Named by kind they get their own look: Azure subscription, Resource group, Virtual network, Subnet, On-premises, DMZ, Power Platform environment, External system.
+- Cloud services as icons: kv@{ icon: "azure:key-vaults", label: "Secrets" }, with azure:, pp: or d365: and the product name in lower case with dashes (azure:app-services, azure:sql-database, azure:function-apps, azure:entra-id, pp:power-automate, d365:sales).
+- Notes: n1["A note"]:::note, inside the section they belong to, tied to what they are about with n1 -.- si (no arrow head).
+- Screens: one subgraph per screen, then class si,ho phone (or tablet, desktop). Up to 8 pieces each, stacking from the top in the order written: :::bar top bar, :::h heading, :::t text, :::in input (label is the placeholder), :::btn button, :::link, :::chk checkbox, :::img image (label " "), :::list and :::tabs (items split by <br>, tabs always at the bottom), :::grid table (columns split by |), :::menu side menu. Link a button to the screen it opens: si_go --> ho. style si_go fill:#4262ff marks the main button.
+- Colours: style web fill:#dbeafe,stroke:#2563eb (fill, stroke and color only).
+- "class x marked" means I highlighted x: my request is about those.
+
+In the link: ; between lines, + for each space, and percent-encode only these: [ %5B, ] %5D, ( %28, ) %29, { %7B, } %7D, | %7C, " %22, > %3E, < %3C, # %23, & %26, %25 for %, %2B for a real +. Everything else stays as it is, in the note too. Example:
 [Open in Kiertotie](${exampleLink()})`;
 
 function starterText(request = '') {
@@ -2824,7 +2986,7 @@ function donePacket(request = '') {
 ${toMermaid()}
 \`\`\`
 ${boardNotes()}
-Reply in the same Kiertotie format. My comments, docs and tables, if any, are listed after the diagram.
+Reply in the same Kiertotie format, with only the changes. My comments, docs and tables, if any, are listed after the diagram.
 My request: ${request}`;
 }
 
@@ -2837,11 +2999,12 @@ function parseHash(h) {
   if (h.startsWith('note=')) {
     const at = h.indexOf('&m=');
     if (at < 0) return null;
-    note = decode(h.slice(5, at)); m = h.slice(at + 3);
+    note = decode(h.slice(5, at).replace(/\+/g, ' ')); m = h.slice(at + 3);
   } else if (h.startsWith('m=')) m = h.slice(2);
   else if (h.startsWith('z=')) return { note: '', z: h.slice(2) };
   else return null;
-  return { note: note.trim(), text: decode(m) };
+  // + is a space in links (shorter than %20); a real plus is %2B.
+  return { note: note.trim(), text: decode(m.replace(/\+/g, ' ')) };
 }
 
 async function readHash() {
@@ -3183,7 +3346,7 @@ function tidy() {
   }
 }
 
-function closeMore() { $('#more').open = false; }
+function closeMore(except = null) { for (const d of doc().querySelectorAll('details.more')) if (d !== except) d.open = false; }
 
 $('#btn-mark').addEventListener('click', () => setMarkMode(!markMode));
 $('#rail').addEventListener('click', e => {
@@ -3208,8 +3371,11 @@ $('#template-list').addEventListener('click', e => { const b = e.target.closest(
 $('#start-template').addEventListener('click', () => openPop('template'));
 $('#style-picks').addEventListener('click', e => { const b = e.target.closest('[data-bstyle]'); if (b) { e.stopPropagation(); setBoardStyle(b.dataset.bstyle); } });
 $('#board-name').addEventListener('click', openBoards);
-$('#more').addEventListener('toggle', () => { if ($('#more').open) { paintStyles(); paintToggles(); } });
+$('#m-style').addEventListener('toggle', () => { if ($('#m-style').open) { paintStyles(); paintToggles(); } });
+// One menu open at a time.
+for (const d of doc().querySelectorAll('details.more')) d.addEventListener('toggle', () => { if (d.open) closeMore(d); });
 function paintToggles() {
+  $('#menu-theme').textContent = `Day and night: ${{ system: 'follow the system', light: 'day', dark: 'night' }[theme]}`;
   $('#menu-snap').setAttribute('aria-checked', String(snapOn));
   $('#menu-minimap').setAttribute('aria-checked', String(miniOn));
 }
@@ -3251,7 +3417,7 @@ $('#boards-new').addEventListener('click', () => { $('#boards').close(); createB
 $('#boards-template').addEventListener('click', () => { $('#boards').close(); openPop('template'); });
 $('#boards-close').addEventListener('click', () => $('#boards').close());
 $('#ctx').addEventListener('change', ctxChange);
-onDoc('pointerdown', e => { if (!e.target.closest?.('.pop, #rail, #more, #start, .boards')) closePops(); });
+onDoc('pointerdown', e => { if (!e.target.closest?.('.pop, #rail, .tools, #start, .boards')) closePops(); });
 $('#btn-undo').addEventListener('click', undo);
 $('#btn-done').addEventListener('click', done);
 $('#ask').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); done(); } });
@@ -3265,7 +3431,6 @@ $('#docked-reset').addEventListener('click', async () => {
   if (pipWin) { pipWin.close(); for (let i = 0; i < 20 && pipWin; i++) await new Promise(r => setTimeout(r, 25)); }
   floatBoard({ reset: true });
 });
-$('#btn-theme').addEventListener('click', () => setTheme(THEMES[(THEMES.indexOf(theme) + 1) % THEMES.length]));
 
 // Start over: delete the diagram, after asking, and go back to the start card. Undo still brings it back.
 function startOver() {
@@ -3285,19 +3450,19 @@ function setTheme(t) {
   for (const d of [document, pipWin && pipWin.document].filter(Boolean)) {
     if (theme === 'system') delete d.documentElement.dataset.theme; else d.documentElement.dataset.theme = theme;
   }
-  $('#btn-theme').textContent = { system: '◐ Auto', light: '☀ Day', dark: '☾ Night' }[theme];
-  $('#btn-theme').title = `Theme: ${{ system: 'follows your system', light: 'day', dark: 'night' }[theme]}. Click to change.`;
   render();
 }
 $('#ai-chips').addEventListener('click', e => { const b = e.target.closest('[data-ai]'); if (b) setAi(b.dataset.ai); });
 $('#start-sample').addEventListener('click', () => { applyText(SAMPLE, 'sample'); updateEmpty(); });
 $('#note-close').addEventListener('click', () => showNote(''));
-$('#more').addEventListener('click', e => {
+$('.tools').addEventListener('click', e => {
   const pick = e.target.closest('[data-ai]'); if (pick) { setAi(pick.dataset.ai); closeMore(); toast(`Assistant: ${ai().name}`); return; }
   const act = e.target.closest('[data-act]')?.dataset.act;
   if (!act) return;
   closeMore();
   if (act === 'boards') openBoards();
+  if (act === 'zoomsel') zoomToSelection();
+  if (act === 'theme') { setTheme(THEMES[(THEMES.indexOf(theme) + 1) % THEMES.length]); paintToggles(); }
   if (act === 'snap') { snapOn = !snapOn; store.set(SNAP_KEY, snapOn ? 'on' : 'off'); paintToggles(); toast(snapOn ? 'Snapping to the grid' : 'Snapping off'); }
   if (act === 'minimap') { miniOn = !miniOn; store.set(MINI_KEY, miniOn ? 'on' : 'off'); paintToggles(); render(); }
   if (act === 'steps') numberSteps();
@@ -3318,7 +3483,7 @@ $('#more').addEventListener('click', e => {
   if (act === 'source') { document.body.classList.toggle('show-panel'); render(); }
   if (act === 'new') startOver();
 });
-onDoc('click', e => { if (!e.target.closest('#more')) closeMore(); });
+onDoc('click', e => { if (!e.target.closest('details.more')) closeMore(); });
 
 let sourceTimer;
 $('#source').addEventListener('input', () => {

@@ -5,48 +5,72 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Kiertotie</title>
 <meta name="description" content="A diagram board for AI chats that can only chat: the chat answers with a link, you edit, Send passes it back.">
-<link rel="stylesheet" href="style.css?v=20261030-1">
+<link rel="stylesheet" href="style.css?v=20261030-2">
 </head>
 <body>
 <header class="bar">
   <div class="brand"><strong>Kiertotie</strong><button id="board-name" class="board-name" title="Your boards"></button></div>
   <div class="tools" role="toolbar" aria-label="Board actions">
-    <span id="ai-badge" class="ai-badge" title="Your assistant"></span>
-    <button id="btn-float" hidden title="Float the board above all windows, so it stays in view next to your chat">⧉ Float</button>
-    <button id="btn-mark" aria-pressed="false" title="Mark boxes your next request is about (M)">Highlight</button>
-    <button id="btn-undo" title="Undo (Ctrl+Z)">Undo</button>
-    <button id="btn-redo" class="icon-only" title="Redo (Ctrl+Shift+Z)" aria-label="Redo">↷</button>
-    <button id="btn-theme" title="Theme"></button>
-    <details id="more" class="more">
-      <summary>More</summary>
+    <details class="more ai-pick-menu">
+      <summary id="ai-badge" class="ai-badge" title="Your assistant"></summary>
       <div class="menu" role="menu">
-        <button data-act="boards" role="menuitem">Boards…</button>
-        <button data-act="templates" role="menuitem">Templates…</button>
-        <div class="menu-label">Board style</div>
+        <div class="menu-label first">Assistant</div>
+        <div id="ai-menu" class="ai-menu"></div>
+        <button data-act="starter" role="menuitem" id="menu-starter">Copy the instructions again</button>
+      </div>
+    </details>
+    <button id="btn-float" hidden title="Float the board above all windows, so it stays in view next to your chat"><svg class="ic" viewBox="0 0 20 20" aria-hidden="true"><rect x="2.5" y="4" width="15" height="12" rx="2"/><rect x="10" y="9.5" width="6" height="5" rx="1"/></svg><span>Float</span></button>
+    <button id="btn-mark" aria-pressed="false" title="Mark boxes your next request is about (M)"><svg class="ic" viewBox="0 0 20 20" aria-hidden="true"><path d="M4 16 L6 14 L13.5 6.5 L15.5 8.5 L8 16 Z M12 5 L14 3 L17 6 L15 8"/></svg><span>Highlight</span></button>
+    <span class="tsep"></span>
+    <button id="btn-undo" class="icon-only" title="Undo (Ctrl+Z)" aria-label="Undo"><svg class="ic" viewBox="0 0 20 20" aria-hidden="true"><path d="M7.5 5 L3.5 9 L7.5 13 M3.5 9 H12 A4.5 4.5 0 0 1 12 18 H9"/></svg></button>
+    <button id="btn-redo" class="icon-only" title="Redo (Ctrl+Shift+Z)" aria-label="Redo"><svg class="ic" viewBox="0 0 20 20" aria-hidden="true"><path d="M12.5 5 L16.5 9 L12.5 13 M16.5 9 H8 A4.5 4.5 0 0 0 8 18 H11"/></svg></button>
+    <span class="tsep"></span>
+    <details class="more" id="m-style">
+      <summary title="Board style, grid and minimap"><svg class="ic" viewBox="0 0 20 20" aria-hidden="true"><path d="M10 2.5 A7.5 7.5 0 1 0 10 17.5 C11.5 17.5 11.5 15.5 10.5 14.5 C9.5 13.5 10.5 12 12 12 H14 A3.5 3.5 0 0 0 17.5 8.5 C17.5 5 14 2.5 10 2.5 Z"/><circle cx="6.5" cy="9" r="1"/><circle cx="9" cy="6" r="1"/><circle cx="13" cy="6.5" r="1"/></svg><span>Style</span></summary>
+      <div class="menu" role="menu">
+        <div class="menu-label first">Board style</div>
         <div id="style-picks" class="style-picks"></div>
         <div class="menu-label">Board</div>
-        <button data-act="tidy" role="menuitem">Tidy up the layout</button>
-        <button data-act="fit" role="menuitem">Fit to screen</button>
         <button data-act="snap" role="menuitemcheckbox" id="menu-snap">Snap to grid</button>
         <button data-act="minimap" role="menuitemcheckbox" id="menu-minimap">Minimap</button>
+        <button data-act="theme" role="menuitem" id="menu-theme">Day and night</button>
+      </div>
+    </details>
+    <button data-act="templates" title="Templates"><svg class="ic" viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="3" width="6" height="6" rx="1"/><rect x="11" y="3" width="6" height="6" rx="1"/><rect x="3" y="11" width="6" height="6" rx="1"/><rect x="11" y="11" width="6" height="6" rx="1"/></svg><span>Templates</span></button>
+    <details class="more" id="m-import">
+      <summary title="Open files and Mermaid"><svg class="ic" viewBox="0 0 20 20" aria-hidden="true"><path d="M10 3 V12 M6.5 8.5 L10 12 L13.5 8.5 M3.5 13 V16.5 H16.5 V13"/></svg><span>Import</span></summary>
+      <div class="menu" role="menu">
+        <button data-act="open" role="menuitem">Open files…</button>
+        <button data-act="source" role="menuitem">Edit the Mermaid source</button>
+        <p class="menu-note">You can also paste a diagram or a picture straight onto the board, or drop files on it.</p>
+      </div>
+    </details>
+    <details class="more primary-menu" id="m-export">
+      <summary title="Share and download"><span>Export</span></summary>
+      <div class="menu" role="menu">
+        <button data-act="share" role="menuitem">Share link and QR code…</button>
+        <button data-act="mermaid" role="menuitem">Copy as Mermaid</button>
+        <div class="menu-label">Download</div>
+        <button data-act="png" role="menuitem">PNG image</button>
+        <button data-act="svg" role="menuitem">SVG image</button>
+        <button data-act="drawio" role="menuitem">draw.io file</button>
+        <button data-act="mmd" role="menuitem">This board (.mmd)</button>
+        <button data-act="folder" role="menuitem">All boards to a folder…</button>
+      </div>
+    </details>
+    <details class="more" id="more">
+      <summary title="More" aria-label="More"><svg class="ic" viewBox="0 0 20 20" aria-hidden="true"><circle cx="4.5" cy="10" r="1.4"/><circle cx="10" cy="10" r="1.4"/><circle cx="15.5" cy="10" r="1.4"/></svg></summary>
+      <div class="menu" role="menu">
+        <button data-act="boards" role="menuitem">Boards…</button>
+        <div class="menu-label">View</div>
+        <button data-act="fit" role="menuitem">Fit to screen <kbd>Shift 1</kbd></button>
+        <button data-act="zoomsel" role="menuitem">Zoom to selection <kbd>Shift 2</kbd></button>
+        <button data-act="tidy" role="menuitem">Tidy up the layout</button>
         <div class="menu-label">Flow steps</div>
         <button data-act="steps" role="menuitem">Number the steps</button>
         <button data-act="legend" role="menuitem">Add a step legend</button>
         <button data-act="nosteps" role="menuitem">Remove step numbers</button>
-        <div class="menu-label">Share and files</div>
-        <button data-act="share" role="menuitem">Share link and QR code…</button>
-        <button data-act="png" role="menuitem">Download PNG</button>
-        <button data-act="svg" role="menuitem">Download SVG</button>
-        <button data-act="mermaid" role="menuitem">Copy as Mermaid</button>
-        <button data-act="drawio" role="menuitem">Download for draw.io</button>
-        <button data-act="mmd" role="menuitem">Download this board (.mmd)</button>
-        <button data-act="folder" role="menuitem">Save all boards to a folder…</button>
-        <button data-act="open" role="menuitem">Open files…</button>
-        <div class="menu-label">Chat</div>
-        <button data-act="starter" role="menuitem" id="menu-starter">Copy the instructions again</button>
-        <div class="menu-label">Assistant</div>
-        <div id="ai-menu" class="ai-menu"></div>
-        <button data-act="source" role="menuitem">Show source and activity</button>
+        <div class="menu-label">Board</div>
         <button data-act="new" role="menuitem">Clear this board</button>
       </div>
     </details>
@@ -206,6 +230,6 @@
 
 <!-- Bump ?v= on every release, so a page never pairs with a cached older script (GitHub Pages caches for 10 minutes). -->
 <script src="vendor/qrcode.js?v=1"></script>
-<script src="app.js?v=20261030-1"></script>
+<script src="app.js?v=20261030-2"></script>
 </body>
 </html>

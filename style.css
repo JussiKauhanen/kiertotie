@@ -513,3 +513,30 @@ body.floating .minimap { display: none; }
 .screen-devs svg { width: 34px; height: 34px; fill: none; stroke: currentColor; stroke-width: 1.5; }
 .piece-list { display: grid; grid-template-columns: 1fr 1fr; gap: 2px; }
 .piece-list button { border: 0; background: none; font-size: 12px; padding: 5px 8px; text-align: left; }
+
+/* ---------- top bar like orim: Style, Templates, Import, Export ---------- */
+.tools { gap: 2px; }
+.tools > button, .tools .more > summary { display: inline-flex; align-items: center; gap: 6px; height: 34px; padding: 0 10px; border-radius: 8px; }
+.tools .more > summary::after { content: none; }
+.tools svg.ic { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+.tools #more svg.ic { fill: currentColor; stroke: none; }
+.tools .icon-only { padding: 0 8px; }
+.tsep { width: 1px; height: 20px; background: var(--border); margin: 0 3px; }
+.tools .primary-menu > summary { background: var(--accent); color: #fff; font-weight: 600; padding: 0 14px; }
+.tools .primary-menu > summary:hover { background: var(--accent); filter: brightness(1.08); }
+.tools .ai-pick-menu > summary { color: var(--muted); font-size: 12.5px; }
+.menu-label.first { border-top: 0; margin-top: 0; padding-top: 4px; }
+.menu-note { font-size: 11.5px; color: var(--muted); margin: 6px 10px 4px; max-width: 220px; line-height: 1.35; }
+.menu kbd { float: right; margin-left: 12px; font-size: 10.5px; color: var(--muted); }
+.tools .more .menu { right: 0; }
+body.floating .tools > button > span, body.floating .tools .more > summary > span:not(.ai-dot) { display: none; }
+body.floating .tools .primary-menu > summary::before { content: "↗"; }
+@media (max-width: 900px) { .tools > button > span, .tools .more:not(.primary-menu) > summary > span:not(.ai-dot) { display: none; } }
+
+/* sections, note links, label pills */
+.group.section > rect { fill: color-mix(in srgb, var(--accent) 3%, var(--group)); stroke: var(--group-stroke); stroke-width: 1.4; }
+.group.section text.group-title { font-size: 15px; font-weight: 700; fill: var(--text); }
+.edge.note-link path.line { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 3 3; opacity: .8; }
+.edge .label-bg { fill: var(--surface); stroke: var(--border); stroke-width: 1; }
+.edge text { fill: var(--muted); font-weight: 500; }
+#note-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: min(720px, 70vw); }

@@ -65,6 +65,34 @@ In Mermaid, icons are `kv@{ icon: "azure:key-vaults", label: "Secrets" }`, text 
 - **Line types:** a selected line's toolbar has HTTPS, sign-in / token, private link, VPN / ExpressRoute, event, two-way sync and SQL. Each sets the style, colour and label. Lines can also take one of seven colours; they're saved as Mermaid `linkStyle` lines.
 - **Flow steps:** **More → Number the steps** puts ① ② ③ on the line labels in flow order, or only on the selected line. **Add a step legend** makes a table of the steps next to the diagram and updates it when run again.
 
+## Short links
+
+Assistants write their links by hand, so they can't compress them. Kiertotie keeps them short in other ways:
+- **Changes only:** after the first diagram, the assistant sends only new or changed lines, plus `remove id` and `rename id: …`. The board keeps everything else. To add a piece to an existing screen, it names the piece that goes before it: `subgraph si;si_pw;si_ph["Phone"]:::in;end`. A label changed in plain brackets keeps what the box is, so a button stays a button. Removing a frame or screen removes what's inside it.
+- **`+` for spaces** instead of `%20`. A real plus is `%2B`. `:` `,` `;` `@` stay as they are.
+- **Short names:** `:::btn`, `:::in`, `:::h`, `:::t`, `:::link`, `:::chk`, `:::img`, `:::list`, `:::grid`, `:::tabs`, `:::bar`, `:::menu`, `:::note`, and short ids. The long names still work.
+
+On a test board like the YIT journeys, the whole diagram came to 2,155 characters, against 2,731 the old way. A change that added a field, relabelled a button and removed a screen took 151. Share links the board makes itself are compressed (`#z=`).
+
+## Sections
+
+On a bigger board, each part (a journey, an area) is a section: a top-level frame holding frames or screens. Sections stack as rows in the order written, with a bigger title, whatever links run between them. Notes tie to what they describe with a thin grey dotted line (`n1 -.- screen`). Unlinked notes and text go in a strip under the flow. Left to right, linked screens line up by their top edges.
+
+Lines that would cross boxes or screens go around them, along a lane just above or below, with rounded corners. Line labels are pills, and labels and frame titles grow a little when zoomed out so the overview stays readable. **Shift+2** (or double-clicking a screen) zooms to the selection; **Shift+1** fits the board.
+
+## Top bar
+
+Laid out like orim's:
+- **Assistant:** pick the assistant, or copy the instructions again.
+- **Float**, **Highlight**, **undo** and **redo**.
+- **Style:** board styles, snap, minimap, day and night.
+- **Templates**.
+- **Import:** open files, edit the Mermaid source.
+- **Export:** share link and QR, copy as Mermaid, PNG, SVG, draw.io, `.mmd`, all boards to a folder.
+- **⋯:** boards, view, flow steps, clear the board.
+
+In the floating window the buttons show icons only.
+
 ## Screens and mockups
 
 A screen is a frame with a device: a phone, a tablet or a desktop window. Its pieces stack from the top in order, like a real screen. There are twelve: top bar, heading, text, input field, button, link, checkbox, image, list, table, bottom menu and side menu. The top bar stays at the top and the bottom menu at the bottom.
