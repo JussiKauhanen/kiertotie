@@ -48,7 +48,7 @@ Select something to get its toolbar:
 
 A selected box has four dots: drag one onto another box to link them, or onto empty board for a new linked box. The corner square resizes boxes and frames, and the text wraps to fit.
 
-In Mermaid, icons are `kv@{ icon: "azure:key-vaults", label: "Secrets" }`, text is `t1@{ shape: text, label: "…" }` and sticky notes are `n1["…"]:::sticky`. The assistant's instructions teach it all three. When an assistant gets an icon name slightly wrong, the board picks the closest match, for example `azure:key-vault` finds `azure:key-vaults`. Positions, sizes, line routes, zones, tables, docs, images, ink and comments are saved as `%% @…` canvas lines, which Mermaid ignores.
+In Mermaid, icons are `kv@{ icon: "azure:key-vaults", label: "Secrets" }`, text is `t1@{ shape: text, label: "…" }` and sticky notes are `n1["…"]:::sticky`. The assistant's instructions teach it all three. When an assistant gets an icon name slightly wrong, the board picks the closest match, for example `azure:key-vault` finds `azure:key-vaults`. Positions, sizes, line routes, zones, docs, images, ink and comments are saved as `%% @…` canvas lines, which Mermaid ignores.
 
 ## Editing
 
@@ -64,6 +64,33 @@ In Mermaid, icons are `kv@{ icon: "azure:key-vaults", label: "Secrets" }`, text 
 - **Zones:** frames for kinds of boundary: Internet, On-premises, Management group, Azure subscription, Resource group, Virtual network, Subnet, Perimeter / DMZ, Power Platform environment and External system. Each has its own colour, line style and title icon. A frame whose title names a kind, such as "Resource group: prod" or "VNet", becomes that zone by itself. A selected frame's toolbar sets the kind by hand.
 - **Line types:** a selected line's toolbar has HTTPS, sign-in / token, private link, VPN / ExpressRoute, event, two-way sync and SQL. Each sets the style, colour and label. Lines can also take one of seven colours; they're saved as Mermaid `linkStyle` lines.
 - **Flow steps:** **More → Number the steps** puts ① ② ③ on the line labels in flow order, or only on the selected line. **Add a step legend** makes a table of the steps next to the diagram and updates it when run again.
+
+## Backlog tickets
+
+Azure DevOps style cards: the type's colour bar and icon, the title, and details underneath.
+- **In Mermaid:** `e1["Chat leads to CRM"]:::epic`, then `:::feature`, `:::story` (also `:::pbi`), `:::task` or `:::bug`. Lines after `<br>` are details: `s1["Lead form<br>5 pts · Sprint 3"]:::story`. A title starting with `#1042` shows that as the work item's number. Link each parent to its children: `e1 --> f1`.
+- **On the board:** Shapes → Ticket, then the toolbar's shape list changes the type. **Templates → Backlog tickets** has an example.
+- A diagram that colours its own class called `task` or `bug` (`classDef task fill:…`) keeps it as a colour class.
+- **Export → Azure DevOps tickets (.csv)** saves the cards as a file that Azure DevOps imports as work items, with the parent links (Boards → Queries → Import work items, then Save items). Details go into Description. A card with a `#number` is an existing work item, so its new children land under it. In a Scrum project, rename User Story to Product Backlog Item in the file first.
+
+## Tables
+
+A table lives in its label: a caption line, then one line per row with cells split by `|`; the first row is the header. `t1["Status<br>Item | State<br>API | [g]Live<br>Sync | [r]Blocked"]:::table`. A cell starting with `[g]` `[y]` `[r]` `[b]` `[o]` `[p]` or `[grey]` (or 🟢 🟡 🔴 🔵 🟠 🟣 ⚪) gets that colour. Double-click a table to edit its rows. A real `|` in a cell is written `#124;`. Tables come along to draw.io with their colours.
+
+## When a reply replaces most of the board
+
+A reply that starts with `flowchart` replaces the whole diagram. If that removes most of the board, for example when the assistant meant to send only a change, the banner says how many boxes went and offers **Keep them and merge instead**.
+
+## Pictures to the chat
+
+Paste a picture on the board (a screenshot of a diagram, a screen or a chart), type a request such as "replicate this as editable", and press Start or Send. Pasting into the start box or the request box also puts the picture on the board.
+- **One paste:** the board copies a single picture that carries everything: your pictures on top, and under them your message written out in sharp monospace, request first, then the instructions or the diagram. Paste it in the chat and send. (Chats such as Claude keep only the picture when text and picture are pasted at once, which is why the text goes inside the picture.)
+- **Readable size:** chats shrink big pictures (Claude to about 1568 px on the long side), so the picture stays within 1100 × 1800 and your own pictures shrink to make room for the text. When the message is too long to stay readable, for example with a big diagram, it goes in **two pastes** instead: the text first, then **Copy picture** in the bar above the request box. The bar always offers the two-paste way too, in case a chat can't read the text in the picture.
+- **Which pictures go:** the ones you highlighted; if none, the ones added since your last Send. A chip on the request bar says how many will go, and the start card shows them as thumbnails with a link to remove them. Several pictures are combined into one image, numbered 1, 2, 3, and the message says which number is which.
+- **Pictures stay on the board** when the assistant sends a whole new diagram, so the original stays next to its editable copy.
+- **A board with only pictures** still shows the start card, so the first paste carries the instructions too.
+- The instructions teach the assistant to redraw a picture as editable: the same boxes, labels, groups and colours, screens as screens, and a chart's numbers as a table. In the two-paste way, the text tells the assistant to answer "Paste the picture again." when no picture came through.
+- Share links still leave pictures out, since they would make the link too long.
 
 ## Short links
 
@@ -109,7 +136,7 @@ Every frame and screen is laid out on its own first, then placed in the flow as 
 - **Shapes** now include a table and a doc (a card with a title and longer text). Double-click a table to edit it as lines of cells split by `|`. Double-click a doc to edit its title line and text.
 - **Images:** paste a picture or drop one on the board. It's shrunk to at most 1200 pixels and kept with the board. Share links leave images out, since they would make the link too long.
 - **Pen, highlighter, arrow and eraser** are under the pencil on the rail. Ink can be selected, moved, recoloured and deleted like anything else.
-- **Comments:** a numbered pin with text that shows on hover. Comments, doc text and tables travel to the chat in the Send packet, below the diagram. Exports leave comments out.
+- **Comments:** a numbered pin with text that shows on hover. Comments and doc text travel to the chat in the Send packet, below the diagram; tables are part of the diagram itself. Exports leave comments out.
 
 ## Files
 
