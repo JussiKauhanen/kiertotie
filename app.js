@@ -17,14 +17,50 @@ const BASE = location.origin + location.pathname;
 
 const state = { dir: 'LR', nodes: new Map(), groups: new Map(), edges: [], pos: new Map(), classDefs: new Map(), theme: null, ink: [], comments: [] };
 // Shapes Mermaid lacks, written as a class on a plain box (n1["…"]:::sticky); their content lives in canvas lines.
-const CLASS_SHAPES = new Set(['sticky', 'table', 'doc', 'phone', 'browser', 'image', 'uiTopbar', 'uiHeading', 'uiText', 'uiInput', 'uiButton', 'uiLink',
+const CLASS_SHAPES = new Set(['epic', 'feature', 'story', 'task', 'bug', 'sticky', 'table', 'doc', 'phone', 'browser', 'image', 'uiTopbar', 'uiHeading', 'uiText', 'uiInput', 'uiButton', 'uiLink',
   'uiCheckbox', 'uiImage', 'uiList', 'uiTable', 'uiTabbar', 'uiSidebar']);
 // Short class names keep links short: n1["Email"]:::in is an input field. Both forms are read; the short one is written.
 const SHORT = { btn: 'uiButton', in: 'uiInput', input: 'uiInput', field: 'uiInput', h: 'uiHeading', head: 'uiHeading', t: 'uiText', txt: 'uiText',
   link: 'uiLink', chk: 'uiCheckbox', check: 'uiCheckbox', img: 'uiImage', pic: 'uiImage', list: 'uiList', grid: 'uiTable', tbl: 'uiTable',
-  tabs: 'uiTabbar', bar: 'uiTopbar', top: 'uiTopbar', menu: 'uiSidebar', side: 'uiSidebar', note: 'sticky' };
+  tabs: 'uiTabbar', bar: 'uiTopbar', top: 'uiTopbar', menu: 'uiSidebar', side: 'uiSidebar', note: 'sticky',
+  pbi: 'story', userstory: 'story', us: 'story' };
 const SHORT_OUT = { uiButton: 'btn', uiInput: 'in', uiHeading: 'h', uiText: 't', uiLink: 'link', uiCheckbox: 'chk', uiImage: 'img', uiList: 'list', uiTable: 'grid', uiTabbar: 'tabs', uiTopbar: 'bar', uiSidebar: 'menu' };
 const shapeClass = c => SHORT[c] || (CLASS_SHAPES.has(c) ? c : null);
+
+// Backlog tickets, as Azure DevOps cards: the type's colour bar, the type, the title, and details from the lines after it.
+// n1["Lead form<br>5 pts · Sprint 3"]:::story. A title starting with #1234 shows that as the work item's id.
+const TICKETS = {
+  epic: { name: 'Epic', color: '#ff7b00', icon: '<path d="M-5,3 L-5,-3 L-2.5,0 L0,-4 L2.5,0 L5,-3 L5,3 Z"/>' },
+  feature: { name: 'Feature', color: '#773b93', icon: '<path d="M-4,-4 H4 V-1 C4,2 2,3 0,3 C-2,3 -4,2 -4,-1 Z M-2,4 H2"/>' },
+  story: { name: 'User Story', color: '#009ccc', icon: '<path d="M-4,-4.5 H3 L4,-3.5 V4.5 H-4 Z"/>' },
+  task: { name: 'Task', color: '#f2cb1d', icon: '<path d="M-4,-4 H4 V4 H-4 Z"/><path d="M-2,0 L-0.5,1.8 L2.3,-1.6" style="fill:none;stroke:#fff;stroke-width:1.4"/>' },
+  bug: { name: 'Bug', color: '#cc293d', icon: '<path d="M0,-4.5 C3,-4.5 4,-2 4,0.5 C4,3 2.5,4.5 0,4.5 C-2.5,4.5 -4,3 -4,0.5 C-4,-2 -3,-4.5 0,-4.5 Z"/>' },
+};
+const isTicket = n => !!(n && TICKETS[n.shape]);
+
+// Tables live in their label: a caption line, then one line per row with cells split by |, the first row the header.
+// t1["Steps<br>Step | Status<br>Sign in | [g]Done"]:::table. A cell starting with [g] or 🟢 gets that colour.
+const CELL_FILLS = { g: '#d3f9d8', y: '#fff3bf', r: '#ffe3e3', b: '#dbe4ff', o: '#ffe8cc', p: '#f3d9fa', grey: '#e9ecef' };
+const CELL_EMOJI = { '🟢': 'g', '🟡': 'y', '🔴': 'r', '🔵': 'b', '🟠': 'o', '🟣': 'p', '⚪': 'grey', '⚫': 'grey' };
+const CELL_RE = /^\s*(?:\[(g|y|r|b|o|p|grey|gray)\]|(🟢|🟡|🔴|🔵|🟠|🟣|⚪|⚫))\s*/u;
+function cellParts(text) {
+  const m = CELL_RE.exec(text || '');
+  if (!m) return { text: text || '', fill: null };
+  const k = m[1] ? m[1].replace('gray', 'grey') : CELL_EMOJI[m[2]];
+  return { text: text.slice(m[0].length), fill: CELL_FILLS[k] };
+}
+const pipeEsc = s => String(s).replace(/\|/g, '#124;');
+const tableLabel = n => [pipeEsc(n.label), ...(n.table || [['', '']]).map(r => r.map(c => pipeEsc(c)).join(' | '))].join('\n');
+function tableFromLabel(n) {
+  const L = n.label.split('\n').filter(l => l.trim()), cap = L.length && !L[0].includes('|') ? L.shift() : 'Table';
+  n.table = L.map(l => l.split('|').map(c => c.trim().replace(/#124;/g, '|')));
+  if (!n.table.length) n.table = [['', '']];
+  n.label = cap.replace(/#124;/g, '|');
+}
+function ticketParts(label) {
+  const [first = '', ...rest] = String(label || '').split('\n'), m = first.match(/^#(\d+)\s+(.*)$/);
+  return { num: m ? `#${m[1]}` : '', title: m ? m[2] : first, meta: rest.map(x => x.trim()).filter(Boolean).join(' · ') };
+}
 // Canvas-line payloads are percent-encoded, since a line also ends at ;
 const enc = s => encodeURIComponent(s), dec = s => { try { return decodeURIComponent(s); } catch { return s; } };
 let boxes = new Map();       // node id -> {x, y, w, h, shape} (centre)
@@ -48,7 +84,7 @@ const ID_RE = /^[\wÀ-￿]+(?:-(?![-.>])[\wÀ-￿]+)*/;
 const EDGE_PLAIN = /^\s*(<)?(-\.+->|-\.+-|={2,}>|={3,}|-{2,}>|-{3,})\s*(?:\|([^|]*)\|)?\s*/;
 const EDGE_TEXT = /^\s*(<)?(--|==|-\.)\s+(.+?)\s+(-{2,}>|={2,}>|\.->|-{3,}|={3,}|\.-)\s*/;
 
-const cleanLabel = s => s.trim().replace(/^"([\s\S]*)"$/, '$1').replace(/^`|`$/g, '').replace(/<br\s*\/?>|\\n/gi, '\n').replace(/#quot;/g, '"');
+const cleanLabel = s => s.trim().replace(/^"([\s\S]*)"$/, '$1').replace(/^`|`$/g, '').replace(/<br\s*\/?>|\\n/gi, '\n').replace(/#quot;/g, '"').replace(/#59;/g, ';').replace(/&amp;/g, '&').replace(/#35;/g, '#');
 
 function readShape(s, i) {
   for (const [open, close, shape] of SHAPES) {
@@ -168,19 +204,40 @@ function colorVars(item, accent = null) {
   return v.length ? ` style="${esc(v.join(';'))}"` : '';
 }
 
+// Lines end at a newline or ;, but not at a ; inside "quotes" or ending an entity such as #quot; or &amp;
+function splitLines(text) {
+  const out = [];
+  for (const row of String(text).split('\n')) {
+    let cur = '', inQ = false;
+    for (let i = 0; i < row.length; i++) {
+      const c = row[i];
+      if (c === '"' && (inQ || row.indexOf('"', i + 1) >= 0)) inQ = !inQ;
+      if (c === ';' && !inQ && !/(?:[^:]#(?:quot|amp|lt|gt|59|35|124)|&(?:quot|amp|lt|gt|#\d+))$/i.test(cur)) { out.push(cur); cur = ''; continue; }
+      cur += c;
+    }
+    out.push(cur);
+  }
+  return out;
+}
 // Parses text into the current state. replace: start from an empty diagram (manual positions are kept).
 // keep: a diagram that replaces this one keeps the line routes the user picked, like their positions.
 // Undo and loading pass keep: false, since their text carries its own routes.
 function parseInto(text, { replace, keep = true }) {
   const keptRoutes = new Map(keep ? state.edges.filter(e => e.route || e.color).map(e => [`${e.from}>${e.to}`, { route: e.route, color: e.color }]) : []);
   // What the user added that Mermaid can't carry stays too: zones, table cells, doc text, images.
-  const keptExtra = new Map(keep ? [...state.nodes.values(), ...state.groups.values()].filter(x => x.table || x.body || x.src || x.zone || x.dev).map(x => [x.id, { table: x.table, body: x.body, src: x.src, zone: x.zone, dev: x.dev }]) : []);
+  const keptExtra = new Map(keep ? [...state.nodes.values(), ...state.groups.values()].filter(x => x.table || x.body || x.src || x.zone || x.dev).map(x => [x.id, { table: x.table, body: x.body, src: x.src, zone: x.zone, dev: x.dev, sent: x.sent }]) : []);
+  // Pictures exist only on the board, so a whole new diagram from the assistant keeps them, like ink and comments.
+  const keptPics = replace && keep ? [...state.nodes.values()].filter(n => n.shape === 'image' && n.src) : [];
   if (replace && !keep) { state.theme = null; state.ink = []; state.comments = []; }
   if (replace) { state.nodes = new Map(); state.groups = new Map(); state.edges = []; state.classDefs = new Map(); }
   const warnings = [];
   const stack = [];
   const fresh = new Set();
-  const lines = text.split(/\n|;/);
+  const lines = splitLines(text);
+  // A class named like a ticket that the diagram colours itself (classDef task fill:#…) stays a colour class.
+  const ownDefs = new Set([...String(text).matchAll(/(?:^|[\n;])\s*classDef\s+([\w-]+)\s+([^\n;]+)/g)]
+    .filter(([, k, v]) => TICKETS[k] && (styleProps(v).stroke || '').toLowerCase() !== TICKETS[k].color).map(m => m[1]));
+  const kindOf = c => ownDefs.has(c) ? null : shapeClass(c);
   const pendPos = new Map();
 
   const touch = spec => {
@@ -198,7 +255,7 @@ function parseInto(text, { replace, keep = true }) {
     // In an update, a new box goes after the one named before it in the same frame.
     if (g) { if (fresh.has(spec.id) && !replace && lastIn.has(g)) after.set(spec.id, lastIn.get(g)); lastIn.set(g, spec.id); }
     if (spec.cls === 'marked') n.marked = true;
-    else if (shapeClass(spec.cls)) n.shape = shapeClass(spec.cls);
+    else if (kindOf(spec.cls)) n.shape = kindOf(spec.cls);
     else if (spec.cls) n.cls = spec.cls;
   };
   const lastIn = new Map(), after = new Map();
@@ -222,6 +279,7 @@ function parseInto(text, { replace, keep = true }) {
     if (line === '---' || /^title:\s/.test(line)) continue;
     if ((m = line.match(/^%%\s*@route\s+(\S+)\s+(\S+)\s+(curved|elbow|straight)\s*$/))) { pendRoute.set(`${m[1]}>${m[2]}`, m[3]); continue; }
     if ((m = line.match(/^%%\s*@zone\s+(\S+)\s+(\w+)\s*$/))) { extra(m[1], 'zone', m[2]); continue; }
+    if ((m = line.match(/^%%\s*@sent\s+(\S+)\s*$/))) { extra(m[1], 'sent', true); continue; }
     if ((m = line.match(/^%%\s*@device\s+(\S+)\s+(\w+)\s*$/))) { if (DEVICE_ALIAS[m[2].toLowerCase()]) extra(m[1], 'dev', DEVICE_ALIAS[m[2].toLowerCase()]); continue; }
     if ((m = line.match(/^%%\s*@(table|doc|image)\s+(\S+)\s+(\S+)\s*$/))) {
       const v = dec(m[3]);
@@ -242,7 +300,7 @@ function parseInto(text, { replace, keep = true }) {
     }
     if (!line || line.startsWith('%%')) continue;
     if ((m = line.match(/^(?:flowchart|graph)\s*(LR|RL|TD|TB|BT)?\s*$/i))) { state.dir = (m[1] || 'TD').toUpperCase().replace('TB', 'TD'); continue; }
-    if ((m = line.match(/^classDef\s+([\w-]+)\s+(.+)$/))) { if (m[1] !== 'marked' && !shapeClass(m[1]) && !DEVICE_ALIAS[m[1].toLowerCase()]) state.classDefs.set(m[1], styleProps(m[2])); continue; }
+    if ((m = line.match(/^classDef\s+([\w-]+)\s+(.+)$/))) { if (m[1] !== 'marked' && !kindOf(m[1]) && !DEVICE_ALIAS[m[1].toLowerCase()]) state.classDefs.set(m[1], styleProps(m[2])); continue; }
     if ((m = line.match(/^linkStyle\s+([\d\s,]+?)\s+(.+)$/))) {
       const st = styleProps(m[2]);
       if (st.stroke) for (const i of m[1].split(',')) pendColor.set(+i, st.stroke);
@@ -276,7 +334,7 @@ function parseInto(text, { replace, keep = true }) {
         if (!item) continue;
         if (m[2] === 'marked') item.marked = true;
         else if (item === state.groups.get(id) && DEVICE_ALIAS[m[2].toLowerCase()]) item.dev = DEVICE_ALIAS[m[2].toLowerCase()];
-        else if (shapeClass(m[2])) { if (item === state.nodes.get(id)) item.shape = shapeClass(m[2]); }
+        else if (kindOf(m[2])) { if (item === state.nodes.get(id)) item.shape = kindOf(m[2]); }
         else item.cls = m[2];
       }
       continue;
@@ -346,6 +404,8 @@ function parseInto(text, { replace, keep = true }) {
     if (item) for (const [k, v] of Object.entries(x)) if (v != null) item[k] = v;
   }
 
+  for (const n of keptPics) if (!state.nodes.has(n.id)) state.nodes.set(n.id, { ...n, group: state.groups.has(n.group) ? n.group : null });
+  for (const n of state.nodes.values()) if (n.shape === 'table' && n.label.includes('|')) tableFromLabel(n);
   // An implicit node with a group's id is a link to that group, not a box.
   for (const [id, n] of state.nodes) if (n.implicit && state.groups.has(id)) state.nodes.delete(id);
   for (const g of state.groups.values()) if (g.parent && !state.groups.has(g.parent)) g.parent = null;
@@ -375,7 +435,7 @@ function toMermaid() {
   const decl = n => {
     if (n.shape === 'icon') return `${n.id}@{ icon: "${n.icon}", label: ${q(n.label)} }`;
     if (n.shape === 'text') return `${n.id}@{ shape: text, label: ${q(n.label)} }`;
-    const [o, c] = WRAP[n.shape] || WRAP.box; return `${n.id}${o}${q(n.label)}${c}`;
+    const [o, c] = WRAP[n.shape] || WRAP.box; return `${n.id}${o}${q(n.shape === 'table' ? tableLabel(n) : n.label)}${c}`;
   };
   const emit = (gid, ind) => {
     for (const g of state.groups.values()) if (g.parent === gid) {
@@ -398,6 +458,7 @@ function toMermaid() {
   // Other Mermaid tools draw these as boxes with the class's colours.
   const CLASS_LOOK = { sticky: `fill:${STICKY.fill},stroke:${STICKY.stroke}`, table: 'fill:#ffffff,stroke:#868e96', doc: 'fill:#ffffff,stroke:#868e96',
     phone: 'fill:#ffffff,stroke:#1a1a1a', browser: 'fill:#ffffff,stroke:#1a1a1a', image: 'fill:#f1f3f5,stroke:#868e96' };
+  for (const [k, t] of Object.entries(TICKETS)) CLASS_LOOK[k] = `fill:#ffffff,stroke:${t.color},stroke-width:3px`;
   for (const k of Object.keys(UI_KINDS)) CLASS_LOOK[k] = k === 'uiButton' ? 'fill:#5f6470,stroke:#5f6470,color:#ffffff' : 'fill:#eceef2,stroke:#c4c8d0,color:#4b5160';
   for (const c of CLASS_SHAPES) {
     const ids = [...state.nodes.values()].filter(n => n.shape === c).map(n => n.id), name = SHORT_OUT[c] || c;
@@ -430,9 +491,9 @@ function canvasLines({ images = true } = {}) {
   if (state.theme) L.push(`%% @theme ${state.theme}`);
   for (const g of state.groups.values()) if (g.zone) L.push(`%% @zone ${g.id} ${g.zone}`);
   for (const n of state.nodes.values()) {
-    if (n.table) L.push(`%% @table ${n.id} ${enc(JSON.stringify(n.table))}`);
     if (n.body) L.push(`%% @doc ${n.id} ${enc(n.body)}`);
     if (n.src && images) L.push(`%% @image ${n.id} ${enc(n.src)}`);
+    if (n.sent && n.shape === 'image') L.push(`%% @sent ${n.id}`);
   }
   for (const k of state.ink) L.push(`%% @ink ${k.id} ${k.kind} ${k.color} ${k.pts.map(([x, y]) => `${r(x)},${r(y)}`).join(' ')}`);
   for (const c of state.comments) L.push(`%% @comment ${c.id} ${r(c.x)} ${r(c.y)} ${enc(c.text)}`);
@@ -469,6 +530,10 @@ function nodeSize(n, p = {}) {
     const tw = Math.max(0, ...lines.map(l => textWidth(l, 12)));
     return { w: fw || Math.max(64, tw + 12), h: 50 + lines.length * 15, lines };
   }
+  if (isTicket(n)) {
+    const w = fw || 230, t = ticketParts(n.label), lines = wrapLabel(t.title, w - 28, 13, 600), meta = t.meta ? wrapLabel(t.meta, w - 28, 11.5, 400) : [];
+    return { w, h: Math.max(fh, 40 + lines.length * 18 + (meta.length ? 2 + meta.length * 15 : 0)), lines, meta, ticket: t };
+  }
   if (n.shape === 'sticky') {
     const w = fw || 160, lines = wrapLabel(n.label, w - 28);
     return { w, h: Math.max(fh || w, lines.length * 18 + 28), lines };
@@ -476,7 +541,7 @@ function nodeSize(n, p = {}) {
   if (n.shape === 'table') {
     // Columns as wide as their widest cell; the caption sits above the grid.
     const rows = n.table || [['']], cols = Math.max(...rows.map(r => r.length));
-    const colW = [...Array(cols)].map((_, c) => Math.max(40, ...rows.map((r, i) => textWidth(r[c] || '', 12.5, i ? 400 : 600) + 18)));
+    const colW = [...Array(cols)].map((_, c) => Math.max(40, ...rows.map((r, i) => textWidth(cellParts(r[c]).text, 12.5, i ? 400 : 600) + 18)));
     const natural = colW.reduce((a, b) => a + b, 0);
     const scale = fw ? fw / natural : 1;
     return { w: fw || natural, h: Math.max(fh, 26 + rows.length * 26), colW: colW.map(x => x * scale), rows, lines: [n.label] };
@@ -601,9 +666,13 @@ function layout() {
     }
     if (!items.length) return { w: 160, h: 60 };
     const all0 = items, set0 = new Set(all0), out = new Map(all0.map(id => [id, new Set()])), deg = new Map(all0.map(id => [id, 0]));
+    const lab = new Map(); // a>b: the widest line label between these two items
     for (const e of state.edges) {
       const a = itemAt(e.from, gid), b = itemAt(e.to, gid);
-      if (a && b && a !== b && set0.has(a) && set0.has(b)) { out.get(a).add(b); deg.set(a, deg.get(a) + 1); deg.set(b, deg.get(b) + 1); }
+      if (a && b && a !== b && set0.has(a) && set0.has(b)) {
+        out.get(a).add(b); deg.set(a, deg.get(a) + 1); deg.set(b, deg.get(b) + 1);
+        if (e.label) lab.set(`${a}>${b}`, Math.max(lab.get(`${a}>${b}`) || 0, textWidth(e.label.replace(/\n/g, ' '), 11.5, 500) + 14));
+      }
     }
     // On the board itself, sections (frames holding frames or screens) are rows in the order written,
     // whatever links run between them; anything else on the board comes first, as a row of its own.
@@ -615,7 +684,7 @@ function layout() {
         if (rest.length) {
           const sub = new Set(rest), o2 = new Map(rest.map(id => [id, new Set([...out.get(id)].filter(v => sub.has(v)))]));
           const hasLinks = [...o2.values()].some(v => v.size);
-          const r = hasLinks ? rankBlock(rest, o2) : wrapRow(rest, null);
+          const r = hasLinks ? rankBlock(rest, o2, lab) : wrapRow(rest, null);
           rows.push({ ids: rest, w: r.w, h: r.h, inner: true });
         }
         for (const id of secs) rows.push({ ids: [id], w: foot.get(id).w, h: foot.get(id).h });
@@ -635,10 +704,10 @@ function layout() {
     if (!linked.length && !allFrames) return wrapRow(loose, null);
     if (linked.length && loose.length) {
       items = linked;
-      const flow = rankBlock(items, out);
+      const flow = rankBlock(items, out, lab);
       return wrapRow(loose, flow);
     }
-    return rankBlock(all0, out);
+    return rankBlock(all0, out, lab);
   };
   // Loose items in rows, left to right, under the flow (or on their own), wrapping at a sensible width.
   const wrapRow = (ids, flow) => {
@@ -653,7 +722,7 @@ function layout() {
     }
     return { w, h: y + rowH };
   };
-  const rankBlock = (items, out) => {
+  const rankBlock = (items, out, lab = new Map()) => {
     const set = new Set(items);
     for (const [k, vs] of out) for (const v of [...vs]) if (!set.has(k) || !set.has(v)) vs.delete(v);
     // Cycles broken by a depth-first walk; ranks by longest path.
@@ -681,15 +750,21 @@ function layout() {
       for (let r = layers.length - 2; r >= 0; r--) { order(layers[r], flip ? preds : succs); reindex(); }
     }
     const main = id => horiz ? foot.get(id).w : foot.get(id).h, cross = id => horiz ? foot.get(id).h : foot.get(id).w;
+    // Left to right, a gap between two columns is wide enough for the widest line label crossing it.
+    const gapAfter = layers.map(() => GAP_MAIN);
+    if (horiz) for (const [u, v] of dag) {
+      const w = lab.get(`${u}>${v}`) || lab.get(`${v}>${u}`) || 0, ru = rank.get(u), rv = rank.get(v);
+      if (w && Math.abs(rv - ru) === 1) gapAfter[Math.min(ru, rv)] = Math.max(gapAfter[Math.min(ru, rv)], Math.min(w, 320) + 56);
+    }
     let m = 0;
     const along = new Map(), across = new Map();
-    for (const layer of layers) {
+    layers.forEach((layer, li) => {
       const thick = Math.max(0, ...layer.map(main));
       const span = layer.reduce((a, id) => a + cross(id), 0) + GAP_CROSS * (layer.length - 1);
       let c = -span / 2;
       for (const id of layer) { along.set(id, m + thick / 2); across.set(id, c + cross(id) / 2); c += cross(id) + GAP_CROSS; }
-      m += thick + GAP_MAIN;
-    }
+      m += thick + gapAfter[li];
+    });
     // Pull each item towards the middle of the items it links to, keeping the order: fewer crossing, straighter lines.
     for (let pass = 0; pass < 3; pass++) for (const layer of layers) {
       for (let i = 0; i < layer.length; i++) {
@@ -932,6 +1007,13 @@ function textSvg(lines, dy = 0, step = 18) {
 
 // What goes inside a node's <g>, centred on 0,0.
 // Wireframe pieces in greys, as in Miro's wireframe kit; a fill colour on a piece is its accent.
+// Text cut to a width, ending in …
+function fitText(t, maxW, size, weight) {
+  if (textWidth(t, size, weight) <= maxW) return t;
+  let s = t;
+  while (s.length > 1 && textWidth(`${s}…`, size, weight) > maxW) s = s.slice(0, -1);
+  return `${s.trimEnd()}…`;
+}
 function uiSvg(n, b) {
   // An empty label falls back to the id elsewhere; on a piece it just means no text.
   const w = b.w, h = b.h, x0 = -w / 2, y0 = -h / 2, acc = colorsOf(n).fill, label = n.label === n.id ? '' : n.label || '';
@@ -939,7 +1021,7 @@ function uiSvg(n, b) {
   const bars = (x, y, ws) => ws.map((f, i) => `<rect class="ui-bar" x="${x}" y="${y + i * 10}" width="${w * f}" height="5" rx="2.5"/>`).join('');
   switch (n.shape) {
     case 'uiTopbar': return `<rect class="ui-top" x="${x0}" y="${y0}" width="${w}" height="${h}"/><path class="ui-line" d="M${x0},${-y0} h${w}"/>` +
-      `<path class="ui-ico" d="M${x0 + 12},-4 h12 M${x0 + 12},0 h12 M${x0 + 12},4 h12"/>${T(label, 0, 0, 'ui-title', 'middle')}<circle class="ui-avatar" cx="${-x0 - 18}" cy="0" r="7"/>`;
+      `<path class="ui-ico" d="M${x0 + 12},-4 h12 M${x0 + 12},0 h12 M${x0 + 12},4 h12"/>${T(fitText(label, w - 76, 11, 600), 0, 0, 'ui-title', 'middle')}<circle class="ui-avatar" cx="${-x0 - 18}" cy="0" r="7"/>`;
     case 'uiHeading': return `<rect class="ui-hit" x="${x0}" y="${y0}" width="${w}" height="${h}"/>${T(label, x0, 0, 'ui-h')}`;
     case 'uiText': {
       if (!label) return `<rect class="ui-hit" x="${x0}" y="${y0}" width="${w}" height="${h}"/>${bars(x0, y0 + 5, [1, 0.92, 0.6])}`;
@@ -954,7 +1036,7 @@ function uiSvg(n, b) {
       (label ? T(label, 0, 0, 'ui-cap', 'middle') : '');
     case 'uiList': return `<rect class="ui-hit" x="${x0}" y="${y0}" width="${w}" height="${h}"/>` + uiItems(label).map((t, i) => {
       const y = y0 + i * 30 + 15;
-      return `<circle class="ui-avatar" cx="${x0 + 10}" cy="${y}" r="9"/>${T(t, x0 + 26, y, 'ui-p')}<path class="ui-ico" d="M${-x0 - 8},${y - 4} l4,4 l-4,4"/>${i ? `<path class="ui-line" d="M${x0},${y - 15} h${w}"/>` : ''}`;
+      return `<circle class="ui-avatar" cx="${x0 + 10}" cy="${y}" r="9"/>${T(fitText(t, w - 48, 11, 400), x0 + 26, y, 'ui-p')}<path class="ui-ico" d="M${-x0 - 8},${y - 4} l4,4 l-4,4"/>${i ? `<path class="ui-line" d="M${x0},${y - 15} h${w}"/>` : ''}`;
     }).join('');
     case 'uiTable': {
       const cols = uiItems(label).length ? uiItems(label) : ['Name', 'Status'], cw = w / cols.length;
@@ -994,6 +1076,15 @@ function nodeInner(n, b) {
     return shapeSvg(b) + pic + `<text class="icon-label" text-anchor="middle" dominant-baseline="central">${lines.map((l, i) => `<tspan x="0" y="${start + i * 15}">${esc(l)}</tspan>`).join('')}</text>`;
   }
   if (n.shape === 'text') return shapeSvg(b) + textSvg(b.lines, 0, 21);
+  if (isTicket(n)) {
+    const T = TICKETS[n.shape], t = b.ticket, x0 = -b.w / 2, y0 = -b.h / 2, ty = y0 + 36 + b.lines.length * 18;
+    return `<rect class="node-shape" x="${x0}" y="${y0}" width="${b.w}" height="${b.h}" rx="4"/>` +
+      `<path class="ticket-bar" d="M${x0 + 4},${y0} H${x0 + 5} V${y0 + b.h} H${x0 + 4} A4,4 0 0 1 ${x0},${y0 + b.h - 4} V${y0 + 4} A4,4 0 0 1 ${x0 + 4},${y0} Z" style="fill:${T.color}"/>` +
+      `<g class="ticket-icon" transform="translate(${x0 + 19},${y0 + 15})" style="fill:${T.color};stroke:${T.color}">${T.icon}</g>` +
+      `<text class="ticket-type" x="${x0 + 30}" y="${y0 + 15}" dominant-baseline="central">${esc(T.name)}${t.num ? `<tspan class="ticket-num" dx="6">${esc(t.num)}</tspan>` : ''}</text>` +
+      `<text class="ticket-title" dominant-baseline="central">${b.lines.map((l, i) => `<tspan x="${x0 + 14}" y="${y0 + 36 + i * 18}">${esc(l)}</tspan>`).join('')}</text>` +
+      (b.meta.length ? `<text class="ticket-meta" dominant-baseline="central">${b.meta.map((l, i) => `<tspan x="${x0 + 14}" y="${ty + 1 + i * 15}">${esc(l)}</tspan>`).join('')}</text>` : '');
+  }
   const x0 = -b.w / 2, y0 = -b.h / 2, r = `<rect class="node-shape" x="${x0}" y="${y0}" width="${b.w}" height="${b.h}"`;
   if (n.shape === 'table') {
     let out = `<text class="table-cap" x="${x0}" y="${y0 + 9}">${esc(n.label)}</text><rect class="node-shape" x="${x0}" y="${y0 + 22}" width="${b.w}" height="${b.h - 22}" rx="4"/>`;
@@ -1004,7 +1095,9 @@ function nodeInner(n, b) {
       if (i) out += `<path class="table-line" d="M${x0},${top + i * rh} h${b.w}"/>`;
       b.colW.forEach((cw, c) => {
         if (c && !i) out += `<path class="table-line" d="M${x},${top} v${b.h - 22}"/>`;
-        out += `<text class="cell${i ? '' : ' head'}" x="${x + 9}" y="${top + i * rh + rh / 2}" dominant-baseline="central">${esc(row[c] || '')}</text>`;
+        const cp = cellParts(row[c]);
+        if (cp.fill) out += `<rect class="cell-fill" x="${x + 0.5}" y="${top + i * rh + 0.5}" width="${cw - 1}" height="${rh - 1}" style="fill:${cp.fill}"/>`;
+        out += `<text class="cell${i ? '' : ' head'}" x="${x + 9}" y="${top + i * rh + rh / 2}" dominant-baseline="central"${cp.fill ? ' style="fill:#1d2330"' : ''}>${esc(cp.text)}</text>`;
         x += cw;
       });
     });
@@ -1044,18 +1137,25 @@ function sideOf(b, toward, horiz) {
 }
 
 // What lines go around: boxes and whole screens, but not the line's own ends or the screens they sit on.
-let obstacles = [];
+let obstacles = [], lanes = [];
 function collectObstacles() {
-  obstacles = [];
+  obstacles = []; lanes = [];
   for (const [id, b] of boxes) if (!deviceOf(state.nodes.get(id)?.group)) obstacles.push({ id, b });
   for (const [gid, b] of groupBoxes) if (deviceOf(gid)) obstacles.push({ id: gid, b });
+  // Frame titles: lanes keep clear of them, though lines may still cross them.
+  for (const [gid, b] of groupBoxes) {
+    if (deviceOf(gid)) continue;
+    const w = textWidth(state.groups.get(gid).title, 12.5, 600) + 28, y0 = b.y - b.h / 2;
+    obstacles.push({ id: gid, title: true, b: { x: b.x - b.w / 2 + w / 2, y: y0 - FRAME_TITLE / 2, w, h: FRAME_TITLE } });
+  }
 }
 // A line that would cross boxes on its way goes around them instead: out of its side, along a lane just
 // above or below everything in the way, and back in, with rounded corners.
 function detour(e, s, t, at) {
   const own = new Set([e.from, e.to, state.nodes.get(e.from)?.group, state.nodes.get(e.to)?.group]);
   const inside = (p, b, m = 2) => Math.abs(p.x - b.x) < b.w / 2 - m && Math.abs(p.y - b.y) < b.h / 2 - m;
-  const cand = obstacles.filter(o => !own.has(o.id) && !inside(s, o.b, -4) && !inside(t, o.b, -4));
+  const cand = obstacles.filter(o => !o.title && !own.has(o.id) && !inside(s, o.b, -4) && !inside(t, o.b, -4));
+  const titles = obstacles.filter(o => o.title);
   const samples = [...Array(15)].map((_, i) => at((i + 1) / 16));
   let block = cand.filter(o => samples.some(p => inside(p, o.b)));
   if (!block.length) return null;
@@ -1065,7 +1165,7 @@ function detour(e, s, t, at) {
   const span = horiz ? [Math.min(a0.x, b0.x), Math.max(a0.x, b0.x)] : [Math.min(a0.y, b0.y), Math.max(a0.y, b0.y)];
   const mid = horiz ? (s.y + t.y) / 2 : (s.x + t.x) / 2;
   // Boxes a lane at v would run through, between the two ends.
-  const inLane = v => cand.filter(o => {
+  const inLane = v => [...cand, ...titles].filter(o => {
     const c = horiz ? o.b.x : o.b.y, half = (horiz ? o.b.w : o.b.h) / 2, m = horiz ? o.b.y : o.b.x, mh = (horiz ? o.b.h : o.b.w) / 2;
     return c + half > span[0] && c - half < span[1] && Math.abs(m - v) < mh + 12;
   });
@@ -1079,6 +1179,9 @@ function detour(e, s, t, at) {
     if (!more.length) break;
     block = [...block, ...more];
   }
+  // Lines going around along the same lane spread out, so they don't draw on top of each other.
+  for (let k = 0; k < 12 && lanes.some(l => l.horiz === horiz && Math.abs(l.v - v) < 9 && l.a < span[1] && l.b > span[0]); k++) v += v < mid ? -10 : 10;
+  lanes.push({ horiz, v, a: span[0], b: span[1] });
   const pts = horiz ? [s, a0, { x: a0.x, y: v }, { x: b0.x, y: v }, b0, t] : [s, a0, { x: v, y: a0.y }, { x: v, y: b0.y }, b0, t];
   return { d: roundedPath(pts, 14), at: alongPolyline(pts), start: s };
 }
@@ -1203,7 +1306,6 @@ function render() {
     taken.push({ x0, x1: x0 + textWidth(state.groups.get(gid).title, 12.5, 600) + 24, y0: y0 - FRAME_TITLE, y1: y0 });
     if (deviceOf(gid)) taken.push({ x0, x1: x0 + b.w, y0, y1: y0 + b.h });
   }
-  const hits = r => taken.some(t => r.x0 < t.x1 && r.x1 > t.x0 && r.y0 < t.y1 && r.y1 > t.y0);
   state.edges.forEach((e, i) => {
     const a = anchorBox(e.from), b = anchorBox(e.to);
     if (!a || !b) return;
@@ -1216,8 +1318,15 @@ function render() {
       const text = e.label.replace(/\n/g, ' '), zs = Math.min(1.8, Math.max(1, 0.75 / view.k)), fs = 11.5 * zs;
       const lw = textWidth(text, fs, 500) + 14 * zs, lh = 19 * zs;
       const rectAt = p => ({ x0: p.x - lw / 2, x1: p.x + lw / 2, y0: p.y - lh / 2, y1: p.y + lh / 2 });
-      let p = at(0.5);
-      for (const u of [0.5, 0.38, 0.62, 0.28, 0.72, 0.2, 0.8]) { const q = at(u); if (!hits(rectAt(q))) { p = q; break; } }
+      // Along the line first, then just beside it; if every spot is taken, the one that overlaps least.
+      const overlap = r => taken.reduce((a, t) => a + Math.max(0, Math.min(r.x1, t.x1) - Math.max(r.x0, t.x0)) * Math.max(0, Math.min(r.y1, t.y1) - Math.max(r.y0, t.y0)), 0);
+      const us = [0.5, 0.38, 0.62, 0.28, 0.72, 0.2, 0.8];
+      const beside = u => {
+        const q = at(u), a1 = at(Math.max(0, u - 0.03)), a2 = at(Math.min(1, u + 0.03)), flat = Math.abs(a2.x - a1.x) >= Math.abs(a2.y - a1.y);
+        return flat ? [{ x: q.x, y: q.y - lh - 3 }, { x: q.x, y: q.y + lh + 3 }] : [{ x: q.x - lw / 2 - 8, y: q.y }, { x: q.x + lw / 2 + 8, y: q.y }];
+      };
+      let p = at(0.5), best = Infinity;
+      for (const q of [...us.map(at), ...us.flatMap(beside)]) { const o = overlap(rectAt(q)); if (o < best) { best = o; p = q; if (!o) break; } }
       taken.push(rectAt(p));
       label = `<rect class="label-bg" x="${p.x - lw / 2}" y="${p.y - lh / 2}" width="${lw}" height="${lh}" rx="${lh / 2}"/>` +
         `<text x="${p.x}" y="${p.y}" text-anchor="middle" dominant-baseline="central" style="font-size:${fs}px">${esc(text)}</text>`;
@@ -1227,12 +1336,16 @@ function render() {
     html += `<g class="edge ${e.style}${on ? ' sel' : ''}${noteLink ? ' note-link' : ''}" data-edge="${i}"${e.color ? ` style="--ec:${esc(e.color)}"` : ''}><path class="hit" d="${d}"/><path class="line" d="${d}"${marker}/>${label}</g>`;
   });
   html += state.ink.filter(k => k.kind === 'hl').map(inkSvg).join('');
+  // Pictures go first of all, under the frames and lines too, so they sit behind the diagram drawn from them.
+  let pics = '';
   for (const [id, b] of boxes) {
-    const n = state.nodes.get(id);
-    const kind = isUi(n) ? 'ui' : ['sticky', 'text', 'icon', 'table', 'doc', 'phone', 'browser', 'image'].includes(n.shape) ? n.shape : '';
-    const cls = ['node', kind, n.marked && 'marked', isSel(`n:${id}`) && 'sel', flash.has(id) && `flash-${flash.get(id)}`].filter(Boolean).join(' ');
+    const n = state.nodes.get(id), pic = n.shape === 'image';
+    const kind = isUi(n) ? 'ui' : isTicket(n) ? 'ticket' : ['sticky', 'text', 'icon', 'table', 'doc', 'phone', 'browser', 'image'].includes(n.shape) ? n.shape : '';
+    // A picture already sent to the chat fades, so the editable diagram stands out; hover or select to compare.
+    const cls = ['node', kind, n.marked && 'marked', isSel(`n:${id}`) && 'sel', flash.has(id) && `flash-${flash.get(id)}`, n.sent && kind === 'image' && 'faded'].filter(Boolean).join(' ');
     const a = (!kind || kind === 'table' || kind === 'doc') && accentOf(n.group);
-    html += `<g class="${cls}" data-node="${esc(id)}" transform="translate(${b.x},${b.y})"${colorVars(n, a && { stroke: a })}>${nodeInner(n, b)}</g>`;
+    const g = `<g class="${cls}" data-node="${esc(id)}" transform="translate(${b.x},${b.y})"${colorVars(n, a && { stroke: a })}>${nodeInner(n, b)}</g>`;
+    if (pic) pics += g; else html += g;
   }
   html += state.ink.filter(k => k.kind !== 'hl').map(inkSvg).join('');
   if (drag?.kind === 'ink') html += inkSvg(drag.ink);
@@ -1246,7 +1359,7 @@ function render() {
     const a = boxes.get(drag.from), s = sideOf(a, drag.to);
     html += `<path class="ghost" d="M${s.x},${s.y} L${drag.to.x},${drag.to.y}"/>`;
   }
-  vp.innerHTML = html;
+  vp.innerHTML = pics + html;
   updateEmpty();
   renderCtx();
   renderMinimap();
@@ -1395,11 +1508,14 @@ function applyText(text, channel) {
   const removed = [...before.keys()].filter(id => !state.nodes.has(id)).length;
   const parts = [`${added} added`, changed && `${changed} changed`, removed && `${removed} removed`, `${state.edges.length} links`].filter(Boolean);
   const message = `${replace ? 'Replaced diagram' : 'Merged lines'}: ${parts.join(', ')}` + (warnings.length ? ` · ${warnings.length} lines skipped` : '');
+  // A reply meant as a few changes that starts with "flowchart" replaces the whole board. When that removed most
+  // of it, the banner offers to put it back and merge the lines instead.
+  const mergeOffer = replace && removed >= 3 && removed > before.size / 2 ? { src: src.replace(/^(?:flowchart|graph)\b[^\n;]*[\n;]?/i, ''), removed } : null;
   commit(channel, message);
   warnings.forEach(w => log('error', w));
   if (replace || hadNothing) fit();
   setTimeout(() => { flash = new Map(); render(); }, 1700);
-  return { ok: true, message, warnings, nodes: state.nodes.size, edges: state.edges.length, edgesBefore };
+  return { ok: true, message, warnings, nodes: state.nodes.size, edges: state.edges.length, edgesBefore, mergeOffer };
 }
 
 // ---------- boards ----------
@@ -1769,7 +1885,7 @@ function eraseAt(e) {
 
 svg.addEventListener('pointermove', e => {
   if (!drag) return;
-  if (drag.kind === 'pan') { view.x = drag.vx + e.clientX - drag.sx; view.y = drag.vy + e.clientY - drag.sy; render(); return; }
+  if (drag.kind === 'pan') { view.x = drag.vx + e.clientX - drag.sx; view.y = drag.vy + e.clientY - drag.sy; moveView(); return; }
   const p = toWorld(e);
   if (drag.kind === 'connect') { drag.to = p; render(); return; }
   if (drag.kind === 'erase') { eraseAt(e); return; }
@@ -1886,8 +2002,24 @@ svg.addEventListener('wheel', e => {
     const k = Math.min(3, Math.max(0.2, view.k * Math.exp(-e.deltaY * (e.deltaMode === 1 ? 0.05 : 0.0025))));
     view.x = cx - (cx - view.x) * k / view.k; view.y = cy - (cy - view.y) * k / view.k; view.k = k;
   } else { view.x -= e.deltaX; view.y -= e.deltaY; }
-  render();
+  moveView();
 }, { passive: false });
+
+// Panning and zooming only move the drawing, once per frame; the full redraw (labels and titles sized
+// for the zoom, the minimap) waits until the gesture pauses. Redrawing on every wheel event made zoom choppy.
+let viewFrame = 0, viewTimer = 0;
+function moveView() {
+  const w = pipWin || window;
+  if (!viewFrame) viewFrame = w.requestAnimationFrame(() => {
+    viewFrame = 0;
+    $('#viewport').setAttribute('transform', `translate(${view.x},${view.y}) scale(${view.k})`);
+    const step = 20 * view.k * (view.k < 0.5 ? 2 : 1);
+    svg.style.backgroundSize = `${step}px ${step}px`;
+    svg.style.backgroundPosition = `${view.x}px ${view.y}px`;
+  });
+  clearTimeout(viewTimer);
+  viewTimer = setTimeout(render, 160);
+}
 
 function doubleClick(key, p) {
   drag = null;
@@ -1943,7 +2075,7 @@ function placeItem(kind, p, { shape = toolShape, icon = null, edit = true, quiet
     const ic = kind === 'icon' ? iconFor(icon) : null;
     const s = kind === 'icon' ? 'icon' : kind === 'sticky' ? 'sticky' : kind === 'text' ? 'text' : shape;
     const NEW = { sticky: ['note', ''], text: ['text', 'Text'], table: ['table', 'Table'], doc: ['doc', 'Untitled doc'], phone: ['phone', 'App screen'], browser: ['page', 'example.com'] };
-    const [base, label0] = NEW[s] || ['n', 'New box'];
+    const [base, label0] = NEW[s] || (TICKETS[s] ? [s, `New ${TICKETS[s].name.toLowerCase()}`] : ['n', 'New box']);
     id = ic ? freeId(ic.id.split('-').slice(0, 2).join('_'), false) : freeId(base);
     const label = ic ? ic.title : label0;
     state.nodes.set(id, { id, label, shape: s, icon: ic ? ic.key : null, group: into, marked: false, ...(s === 'table' ? { table: [['Name', 'Value'], ['', ''], ['', '']] } : {}) });
@@ -2074,7 +2206,8 @@ function addImage(file, p) {
     const id = freeId('img');
     state.nodes.set(id, { id, label: (file.name || 'Image').replace(/\.\w+$/, ''), shape: 'image', src, group: groupAt(p), marked: false });
     state.pos.set(id, { x: p.x, y: p.y, w, h });
-    sel = { type: 'node', id };
+    // Behind the start card, a selected picture's toolbar would sit on top of the card.
+    sel = $('#start').hidden ? { type: 'node', id } : null;
     commit('board', `Added image ${id}`);
   };
   img.onerror = () => { URL.revokeObjectURL(url); toast('That picture could not be read'); };
@@ -2242,17 +2375,19 @@ onDoc('keyup', e => { if (e.key === ' ') { spaceDown = false; svg.classList.remo
 const looksLikeDiagram = text => /-->|---|==>|-\.->|^\s*(flowchart|graph|subgraph)\b|^\s*(remove|delete|rename|mark|unmark)\s+\S/im.test(text);
 
 onDoc('paste', e => {
+  // A picture: it becomes an image on the board, also when pasted into the start box or the request box.
+  const file = [...(e.clipboardData?.files || [])].find(f => f.type.startsWith('image/'))
+    || [...(e.clipboardData?.items || [])].find(i => i.kind === 'file' && i.type.startsWith('image/'))?.getAsFile();
+  if (file) { e.preventDefault(); addImage(file, viewCentre()); toast($('#start').hidden ? 'Picture added. It goes along with your next Send.' : 'Picture added. It goes along when you start.'); return; }
   if (typing(e.target)) return;
   const text = e.clipboardData?.getData('text/plain') || '';
-  // A picture: it becomes an image on the board.
-  const file = [...(e.clipboardData?.files || [])].find(f => f.type.startsWith('image/'));
-  if (file) { e.preventDefault(); addImage(file, viewCentre()); return; }
   // What Kiertotie itself copied: paste the items, not the Mermaid.
   const clip = readClip();
   if (clip && text && text === clip.text) { e.preventDefault(); pasteClip(clip); return; }
   if (!looksLikeDiagram(text) && !/\[|\(/.test(text)) { toast('That paste does not look like a diagram'); return; }
   e.preventDefault();
-  applyText(text, 'paste');
+  const r = applyText(text, 'paste');
+  if (r.mergeOffer) showNote('Pasted a diagram', r.warnings || [], r.mergeOffer);
 });
 
 // ---------- minimap ----------
@@ -2532,6 +2667,24 @@ const TEMPLATES = [
   style si_btn fill:#4262ff
   style sp_go fill:#4262ff
   style ve_btn fill:#4262ff` },
+  { cat: 'Process', id: 'backlog', name: 'Backlog tickets', desc: 'Epic, features, stories, a task and a bug', tint: '#e6f5fa', code: `flowchart LR
+  e1["Customer self-service portal<br>Q1 2027"]:::epic
+  f1["Sign-in and profile"]:::feature
+  f2["Service requests"]:::feature
+  s1["Sign in with Entra ID<br>3 pts · Sprint 1"]:::story
+  s2["Edit contact details<br>2 pts · Sprint 1"]:::story
+  s3["Create a service request<br>5 pts · Sprint 2"]:::story
+  s4["Track request status<br>3 pts · Sprint 2"]:::story
+  t1["Set up the app registration"]:::task
+  b1["#1042 Status stays Open after closing<br>Sprint 2"]:::bug
+  e1 --> f1
+  e1 --> f2
+  f1 --> s1
+  f1 --> s2
+  f2 --> s3
+  f2 --> s4
+  s1 --> t1
+  s4 --> b1` },
   { cat: 'Process', id: 'flow', name: 'Approval flowchart', desc: 'Shapes, decisions and colours', tint: '#fbf3dc', code: `flowchart TD
   start([Expense submitted]) --> check{Over 500 EUR?}
   check -->|No| auto[Auto-approve]
@@ -2624,7 +2777,7 @@ const PALETTE = [
 const STICKY = PALETTE[1];
 const SHAPE_NAMES = [['box', 'Box'], ['round', 'Rounded'], ['stadium', 'Pill'], ['circle', 'Circle'], ['diamond', 'Decision'],
   ['cylinder', 'Database'], ['hexagon', 'Hexagon'], ['sticky', 'Sticky note'], ['text', 'Text'], ['table', 'Table'], ['doc', 'Doc'],
-  ['phone', 'Phone screen'], ['browser', 'Browser window']];
+  ['phone', 'Phone screen'], ['browser', 'Browser window'], ...Object.entries(TICKETS).map(([k, t]) => [k, `Ticket: ${t.name}`])];
 const ICON_SVG = {
   straight: '<path d="M3 13 L13 3"/>', curved: '<path d="M3 13 C3 6, 13 10, 13 3"/>', elbow: '<path d="M3 13 H8 V3 H13"/>',
   solid: '<path d="M2 8 H14"/>', dotted: '<path d="M2 8 H14" stroke-dasharray="2.5 2"/>', thick: '<path d="M2 8 H14" stroke-width="3.2"/>',
@@ -2822,13 +2975,18 @@ async function copyText(text) {
 }
 
 // The banner: the chat's line about what changed, and a warning when part of a link was unreadable.
-function showNote(note, warnings = []) {
+let mergeOffer = null;
+function showNote(note, warnings = [], offer = null) {
+  mergeOffer = offer;
+  const mb = $('#note-merge');
+  mb.hidden = !offer;
+  if (offer) mb.textContent = `${offer.removed} boxes were removed. Keep them and merge instead`;
   $('#note-text').textContent = note || 'Diagram updated';
   $('#note-text').title = note || '';
   const w = $('#note-warn');
   w.hidden = !warnings.length;
   w.textContent = warnings.length ? `${warnings.length} ${warnings.length === 1 ? 'line' : 'lines'} couldn't be read. Ask ${ai().short} to send the link again.` : '';
-  $('#note').hidden = !note && !warnings.length;
+  $('#note').hidden = !note && !warnings.length && !offer;
 }
 
 // ---------- the assistant ----------
@@ -2948,20 +3106,25 @@ The diagram is a Mermaid flowchart:
 - Cloud services as icons: kv@{ icon: "azure:key-vaults", label: "Secrets" }, with azure:, pp: or d365: and the product name in lower case with dashes (azure:app-services, azure:sql-database, azure:function-apps, azure:entra-id, pp:power-automate, d365:sales).
 - Notes: n1["A note"]:::note, inside the section they belong to, tied to what they are about with n1 -.- si (no arrow head).
 - Screens: one subgraph per screen, then class si,ho phone (or tablet, desktop). Up to 8 pieces each, stacking from the top in the order written: :::bar top bar, :::h heading, :::t text, :::in input (label is the placeholder), :::btn button, :::link, :::chk checkbox, :::img image (label " "), :::list and :::tabs (items split by <br>, tabs always at the bottom), :::grid table (columns split by |), :::menu side menu. Link a button to the screen it opens: si_go --> ho. style si_go fill:#4262ff marks the main button.
+- Backlog tickets as Azure DevOps cards: e1["Chat leads to CRM"]:::epic, then :::feature, :::story, :::task or :::bug. Lines after <br> are details: s1["Lead form<br>5 pts · Sprint 3"]:::story. Link each parent to its children: e1 --> f1.
+- Tables: t1["Status<br>Item | State<br>API | [g]Live<br>Sync | [r]Blocked"]:::table, a caption, then one line per row with cells split by |, the first row is the header. Start a cell with [g] [y] [r] [b] [o] [p] or [grey] to colour it.
+- Pictures: when I attach a picture of a diagram, screen or chart and ask you to replicate it, redraw it as editable in its own section: the same boxes, labels, groups, links and colours, a screen as screens, a chart's numbers as a table.
 - Colours: style web fill:#dbeafe,stroke:#2563eb (fill, stroke and color only).
 - "class x marked" means I highlighted x: my request is about those.
 
 In the link: ; between lines, + for each space, and percent-encode only these: [ %5B, ] %5D, ( %28, ) %29, { %7B, } %7D, | %7C, " %22, > %3E, < %3C, # %23, & %26, %25 for %, %2B for a real +. Everything else stays as it is, in the note too. Example:
 [Open in Kiertotie](${exampleLink()})`;
 
-function starterText(request = '') {
+function starterText(request = '', pics = [], inImage = false) {
+  // Written into a picture, the request comes first, right under the heading, so it is read first.
+  if (inImage) return `My first request: ${request || '(see the picture)'}\n${pictureLine(pics, true)}\n\n${starterText('', [], false).replace(/\n\nMy first request: $/, '')}`;
   return `You are my diagram assistant. I draw on the Kiertotie board at ${BASE}
 You can't open the board yourself: you answer with a link that I click, and the board shows the diagram.
 Later I paste the diagram back from the board, with my highlights and my next request.
 
 ${RULES()}
 
-My first request: ${request}`;
+My first request: ${request}${pics.length ? `\n${pictureLine(pics, inImage)}` : ''}`;
 }
 
 // What the board holds besides the diagram, in words: comments, docs and tables.
@@ -2971,13 +3134,13 @@ function boardNotes() {
   if (state.comments.length) L.push('My comments on the board:', ...state.comments.map((c, i) => `${i + 1}. ${c.text.replace(/\n/g, ' ')}${near(c)}`));
   for (const n of state.nodes.values()) {
     if (n.shape === 'doc' && n.body) L.push(`Doc ${n.id} "${n.label}": ${n.body.replace(/\n/g, ' / ')}`);
-    if (n.shape === 'table' && n.table) L.push(`Table ${n.id} "${n.label}":`, ...n.table.map(r => `| ${r.join(' | ')} |`));
   }
   return L.length ? `\n${L.join('\n')}\n` : '';
 }
 
 // After the starter, a paste carries only the data: the diagram, highlights and the request.
-function donePacket(request = '') {
+function donePacket(request = '', pics = [], inImage = false) {
+  if (inImage) return `My request: ${request || '(see the picture)'}\n${pictureLine(pics, true)}\n\n${donePacket('', [], false).replace(/\nMy request: $/, '')}`;
   const marked = markedItems();
   const names = marked.map(x => `${x.id} (${(x.label || x.title).replace(/\n/g, ' ')})`);
   return `My Kiertotie diagram now${marked.length ? `, with ${names.join(', ')} highlighted` : ''}:
@@ -2986,7 +3149,7 @@ function donePacket(request = '') {
 ${toMermaid()}
 \`\`\`
 ${boardNotes()}
-Reply in the same Kiertotie format, with only the changes. My comments, docs and tables, if any, are listed after the diagram.
+Reply in the same Kiertotie format, with only the changes. My comments and docs, if any, are listed after the diagram.${pics.length ? `\n${pictureLine(pics, inImage)}` : ''}
 My request: ${request}`;
 }
 
@@ -3017,7 +3180,7 @@ async function readHash() {
   }
   if (!pipWin && await handOff(link)) return;
   const r = applyText(link.text, 'link');
-  showNote(link.note, r.warnings || []);
+  showNote(link.note, r.warnings || [], r.mergeOffer);
   updateEmpty();
 }
 
@@ -3028,12 +3191,171 @@ async function readHash() {
 const openedByLink = /^#(m|note|z)=/.test(location.hash);
 const key = /Mac/.test(navigator.platform) ? '⌘' : 'Ctrl+';
 
+// ---------- pictures for the chat ----------
+
+// Pictures on the board travel to the chat with Send: the highlighted ones, or else the ones added since the last Send.
+// The clipboard holds one picture, so several are combined into one image, numbered.
+// "Sent" belongs to the picture itself (saved as %% @sent id), so a new picture that reuses a removed one's id,
+// after Start over for example, still counts as new.
+// all: Start begins a new chat, which has seen none of them, so every picture goes.
+function picturesToSend({ all = false } = {}) {
+  const pics = [...state.nodes.values()].filter(n => n.shape === 'image' && n.src);
+  const marked = pics.filter(n => n.marked);
+  return all ? (marked.length ? marked : pics) : marked.length ? marked : pics.filter(n => !n.sent);
+}
+function markSent(pics) { for (const n of pics) n.sent = true; save(); paintPicChips(); }
+const picName = n => n.label && n.label !== n.id && !/^(image|img)$/i.test(n.label) ? ` (${n.label.replace(/\n/g, ' ')})` : '';
+// inImage: the message is written into the picture, under the pictures themselves.
+function pictureLine(pics, inImage = false) {
+  if (!pics.length) return '';
+  if (inImage) return pics.length === 1 ? `The picture at the top is ${pics[0].id}${picName(pics[0])} from my board.`
+    : `The pictures at the top are numbered: ${pics.map((n, i) => `${i + 1} = ${n.id}${picName(n)}`).join(', ')}.`;
+  const what = pics.length === 1 ? `I attached a picture: ${pics[0].id}${picName(pics[0])} on my board.`
+    : `I attached ${pics.length} pictures in one image, numbered: ${pics.map((n, i) => `${i + 1} = ${n.id}${picName(n)}`).join(', ')}.`;
+  return `${what} If no picture came through, reply only: "Paste the picture again."`;
+}
+
+// Pictures are decoded as soon as they are on the board, so a click can draw and copy straight away.
+const decoded = new Map();
+function decodedImage(n) {
+  let d = decoded.get(n.src);
+  if (!d) { const i = new Image(); d = { i, ok: false }; i.onload = () => { d.ok = true; }; i.src = n.src; decoded.set(n.src, d); }
+  return d.ok ? d.i : null;
+}
+const toPng = c => new Promise((res, rej) => c.toBlob(b => b ? res(b) : rej(new Error('no picture')), 'image/png'));
+// The pictures side by side, two to a row, numbered when there are several, scaled to fit w × h.
+function drawPictures(g, imgs, x0, y0, maxW, maxH) {
+  const many = imgs.length > 1, gap = 24, place = [];
+  const fit = i => { const k = many ? Math.min(1, 900 / i.width, 700 / i.height) : 1; return { w: i.width * k, h: i.height * k }; };
+  let y = 0, W = 0;
+  for (let r = 0; r < imgs.length; r += 2) {
+    let x = 0, rh = 0;
+    for (const i of imgs.slice(r, r + 2)) { const f = fit(i); place.push({ i, x, y, ...f }); x += f.w + gap; rh = Math.max(rh, f.h); }
+    W = Math.max(W, x - gap); y += rh + gap;
+  }
+  const H = y - gap, k = Math.min(1, maxW / W, maxH / H), ox = x0 + (maxW - W * k) / 2;
+  if (!g) return { w: W * k, h: H * k };
+  place.forEach((p, n) => {
+    const x = ox + p.x * k, yy = y0 + p.y * k;
+    g.drawImage(p.i, x, yy, p.w * k, p.h * k);
+    if (!many) return;
+    g.fillStyle = '#4262ff'; g.beginPath(); g.arc(x + 24, yy + 24, 17, 0, Math.PI * 2); g.fill();
+    g.fillStyle = '#ffffff'; g.font = `700 19px ${FONT}`; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(String(n + 1), x + 24, yy + 25);
+    g.textAlign = 'start'; g.textBaseline = 'alphabetic';
+  });
+  return { w: W * k, h: H * k };
+}
+// Just the pictures, for the second paste of the two-paste way.
+function plainPicture(pics) {
+  const imgs = pics.map(decodedImage);
+  if (imgs.some(i => !i)) return null;
+  const sz = drawPictures(null, imgs, 0, 0, 1e5, 1e5), c = Object.assign(document.createElement('canvas'), { width: Math.round(sz.w), height: Math.round(sz.h) }), g = c.getContext('2d');
+  g.fillStyle = '#ffffff'; g.fillRect(0, 0, c.width, c.height); drawPictures(g, imgs, 0, 0, c.width, c.height);
+  return toPng(c);
+}
+// One picture that carries the whole message: the pictures on top, the text written out underneath in sharp
+// monospace. Chats shrink big pictures (Claude to about 1568 px on the long side), so the image stays within
+// 1100 × 1800 and the pictures shrink to make room. A message too long to stay readable returns null.
+const MSG = { W: 1100, H: 1800, pad: 28, size: 15, line: 21, font: 'Menlo, Consolas, "DejaVu Sans Mono", monospace' };
+function messagePicture(pics, text) {
+  const imgs = pics.map(decodedImage);
+  if (imgs.some(i => !i)) return null;
+  const c = document.createElement('canvas'), g = c.getContext('2d'), tw = MSG.W - MSG.pad * 2;
+  g.font = `400 ${MSG.size}px ${MSG.font}`;
+  const lines = [];
+  for (const para of text.split('\n')) {
+    if (!para.trim()) { lines.push(''); continue; }
+    let cur = '';
+    for (const word of para.split(/(\s+)/)) {
+      if (g.measureText(cur + word).width <= tw) { cur += word; continue; }
+      if (cur.trim()) lines.push(cur.trimEnd());
+      cur = word.trimStart();
+      while (g.measureText(cur).width > tw) { let k = cur.length; while (k > 1 && g.measureText(cur.slice(0, k)).width > tw) k--; lines.push(cur.slice(0, k)); cur = cur.slice(k); }
+    }
+    lines.push(cur.trimEnd());
+  }
+  const head = 34, textH = MSG.pad * 2 + head + lines.length * MSG.line, picRoom = Math.min(900, MSG.H - textH - MSG.pad);
+  if (picRoom < 240) return null;
+  const sz = drawPictures(null, imgs, 0, 0, MSG.W - MSG.pad * 2, picRoom);
+  c.width = MSG.W; c.height = Math.round(MSG.pad + sz.h + textH);
+  g.fillStyle = '#ffffff'; g.fillRect(0, 0, c.width, c.height);
+  drawPictures(g, imgs, MSG.pad, MSG.pad, MSG.W - MSG.pad * 2, picRoom);
+  let y = MSG.pad + sz.h + MSG.pad;
+  g.fillStyle = '#4262ff'; g.fillRect(MSG.pad, y - 12, tw, 3);
+  g.fillStyle = '#1a1a1a'; g.font = `700 18px ${FONT}`; g.textBaseline = 'top';
+  g.fillText('My message is written out below. Read all of it and follow it exactly.', MSG.pad, y + 2);
+  y += head;
+  g.font = `400 ${MSG.size}px ${MSG.font}`; g.fillStyle = '#111111';
+  for (const l of lines) { g.fillText(l, MSG.pad, y); y += MSG.line; }
+  return toPng(c);
+}
+
+// With pictures, one paste: a single picture that carries the pictures and the message. When the message is too
+// long to stay readable in it, two pastes: the text, then the bar's Copy picture. (Chats such as Claude keep only
+// the picture when text and picture are pasted at once, so those two never go together.)
+let lastSent = null;
+async function copyPacket(build, pics) {
+  if (!pics.length) { lastSent = null; showSentBar(); return { ok: await copyText(build(false)), pics: 0 }; }
+  const w = pipWin || window, msg = messagePicture(pics, build(true)), text = build(false);
+  lastSent = { text, pics, n: pics.length, oneImage: !!msg };
+  let ok = false;
+  if (msg) {
+    try { await w.navigator.clipboard.write([new w.ClipboardItem({ 'image/png': msg })]); ok = true; }
+    catch { lastSent.oneImage = false; }
+  }
+  if (!ok) ok = await copyText(text);
+  if (!ok) lastSent = null; else markSent(pics);
+  showSentBar();
+  return { ok, pics: lastSent ? pics.length : 0, oneImage: !!lastSent?.oneImage };
+}
+function showSentBar() {
+  const bar = $('#sent-bar');
+  bar.hidden = !lastSent;
+  if (!lastSent) return;
+  const pic = lastSent.n === 1 ? 'the picture' : `the ${lastSent.n} pictures (one image)`, who = esc(ai().short);
+  $('#sent-text').innerHTML = lastSent.oneImage
+    ? `Copied one picture with your message written under it. Paste it in ${who} and send. If ${who} can't read it, send it in two pastes:`
+    : `<b>1</b> Paste the text in ${who}. <b>2</b> Then copy ${pic} and paste it too:`;
+  $('#sent-copytext').textContent = lastSent.oneImage ? 'Copy text' : 'copy the text again';
+  $('#sent-copytext').className = lastSent.oneImage ? '' : 'link';
+  // In the two-paste way the text comes first, so its button does too.
+  if (lastSent.oneImage) bar.insertBefore($('#sent-copytext'), $('#sent-pic')); else bar.insertBefore($('#sent-pic'), $('#sent-copytext'));
+}
+async function copyLastPicture() {
+  if (!lastSent) return;
+  const w = pipWin || window, png = plainPicture(lastSent.pics);
+  if (!png) { toast('The picture is still loading. Try again in a moment.'); return; }
+  try {
+    await w.navigator.clipboard.write([new w.ClipboardItem({ 'image/png': png })]);
+    toast(`Picture copied. Press ${key}V in ${ai().short}, then send.`, 4000);
+    $('#sent-bar').hidden = true;
+  } catch { toast('The browser did not copy the picture. Drag it from the board into the chat instead.', 5000); }
+}
+async function copyLastText() { if (lastSent && await copyText(lastSent.text)) toast(`Text copied. Press ${key}V in ${ai().short}, then Copy picture.`); }
+// "1 picture goes along": on the request bar and the start card, so it is clear before Send.
+function paintPicChips() {
+  const label = ps => ps.length ? `🖼 ${ps.length} ${ps.length === 1 ? 'picture goes' : 'pictures go'} along` : '';
+  const pics = picturesToSend(), t0 = label(pics);
+  pics.forEach(decodedImage);
+  const chip = $('#pic-chip'); if (chip) { chip.hidden = !pics.length; chip.textContent = t0; }
+  const startPics = picturesToSend({ all: true }), t = label(startPics);
+  startPics.forEach(decodedImage);
+  // The start card hides the board, so it shows the pictures themselves, with a way to take them off again.
+  const sp = $('#start-pics');
+  if (sp) {
+    sp.hidden = !startPics.length;
+    sp.innerHTML = startPics.length ? startPics.slice(0, 4).map(n => `<img src="${esc(n.src)}" alt="">`).join('') +
+      `<span>${esc(t.replace('🖼 ', ''))}</span><button type="button" class="link" data-unpic>remove</button>` : '';
+  }
+}
+
 async function done() {
-  const request = $('#ask').value.trim();
-  const ok = await copyText(donePacket(request));
-  if (!ok) { toast('Copying failed: open More → Show source and copy the text by hand', 5000); return; }
+  const request = $('#ask').value.trim(), pics = picturesToSend();
+  const r = await copyPacket(m => donePacket(request, pics, m), pics);
+  if (!r.ok) { toast('Copying failed: open More → Show source and copy the text by hand', 5000); return; }
   $('#ask').value = '';
   const where = ai().short;
+  if (r.pics) { toast(r.oneImage ? `Copied as one picture. Press ${key}V in ${where} and send.` : `Text copied. Press ${key}V in ${where}, then Copy picture.`, 4000); return; }
   if (pipWin) { toast(`Copied. Press ${key}V in ${where}${request ? ' and send' : ' and add your request'}.`, 4000); return; }
   window.close();
   // Still here: the browser does not let this tab close itself (it was not opened from a link).
@@ -3113,7 +3435,7 @@ if (bc) bc.addEventListener('message', ({ data }) => {
   if (!data || !pipWin) return;
   if (data.type === 'floating?') bc.postMessage({ type: 'floating', to: data.from });
   if (data.type === 'apply') {
-    const r = applyText(data.text, 'link'); showNote(data.note || '', r.warnings || []); updateEmpty();
+    const r = applyText(data.text, 'link'); showNote(data.note || '', r.warnings || [], r.mergeOffer); updateEmpty();
     bc.postMessage({ type: 'applied', to: data.from });
   }
 });
@@ -3229,7 +3551,7 @@ function exportDrawio() {
       style = `shape=image;image=${img};imageAspect=1;verticalLabelPosition=bottom;verticalAlign=top;labelBackgroundColor=none;`;
       if (n.shape === 'image') value = '';
     }
-    if (n.shape === 'table') { style = 'html=1;whiteSpace=wrap;overflow=fill;rounded=0;'; value = `<b>${xmlEsc(n.label)}</b><table border="1" style="border-collapse:collapse;width:100%">${(n.table || []).map((r, i) => `<tr>${r.map(x => `<${i ? 'td' : 'th'}>${xmlEsc(x)}</${i ? 'td' : 'th'}>`).join('')}</tr>`).join('')}</table>`; }
+    if (n.shape === 'table') { style = 'html=1;whiteSpace=wrap;overflow=fill;rounded=0;'; value = `<b>${xmlEsc(n.label)}</b><table border="1" style="border-collapse:collapse;width:100%">${(n.table || []).map((r, i) => `<tr>${r.map(x => { const cp = cellParts(x); return `<${i ? 'td' : 'th'}${cp.fill ? ` style="background:${cp.fill};color:#1d2330"` : ''}>${xmlEsc(cp.text)}</${i ? 'td' : 'th'}>`; }).join('')}</tr>`).join('')}</table>`; }
     if (n.shape === 'doc') value = `<b>${xmlEsc(n.label)}</b><br>${xmlEsc(n.body || '').replace(/\n/g, '<br>')}`;
     if (c.fill && n.shape !== 'icon') style += `fillColor=${c.fill};`;
     if (c.stroke) style += `strokeColor=${c.stroke};`;
@@ -3256,6 +3578,35 @@ const boardFile = (name, text) => `---\ntitle: ${name}\n---\n${text}\n`;
 const safeName = s => s.replace(/[\\/:*?"<>|]+/g, '-').trim() || 'board';
 
 // Save every board to a folder you pick, one .mmd file each (Chrome and Edge).
+// The ticket cards as a CSV file that Azure DevOps imports as work items: parents first, each child in the next
+// Title column. A card with a #number is an existing work item, so the file adds its new children under it.
+function adoCsv() {
+  const tickets = [...state.nodes.values()].filter(isTicket);
+  if (!tickets.length) return null;
+  const ids = new Set(tickets.map(n => n.id)), kids = new Map(), hasParent = new Set();
+  for (const e of state.edges) {
+    if (!ids.has(e.from) || !ids.has(e.to) || e.from === e.to || hasParent.has(e.to)) continue;
+    (kids.get(e.from) || kids.set(e.from, []).get(e.from)).push(e.to); hasParent.add(e.to);
+  }
+  const rows = [], seen = new Set();
+  const walk = (id, d) => { if (seen.has(id)) return; seen.add(id); rows.push([state.nodes.get(id), d]); for (const k of kids.get(id) || []) walk(k, d + 1); };
+  for (const n of tickets) if (!hasParent.has(n.id)) walk(n.id, 0);
+  for (const n of tickets) walk(n.id, 0); // whatever is left sits in a loop
+  const depth = Math.max(...rows.map(([, d]) => d)) + 1, cols = [...Array(depth)];
+  const cell = v => /[",\r\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
+  const head = ['ID', 'Work Item Type', ...cols.map((_, i) => `Title ${i + 1}`), 'Description'];
+  return [head, ...rows.map(([n, d]) => {
+    const t = ticketParts(n.label);
+    return [t.num.slice(1), TICKETS[n.shape].name, ...cols.map((_, i) => i === d ? t.title : ''), t.meta];
+  })].map(r => r.map(cell).join(',')).join('\r\n');
+}
+function downloadAdo() {
+  const csv = adoCsv();
+  if (!csv) { toast('Add some ticket cards first: Shapes → Ticket, or Templates → Backlog tickets', 4000); return; }
+  download(`${fileBase()}-devops.csv`, new Blob(['\ufeff' + csv], { type: 'text/csv' }));
+  toast('Saved. In Azure DevOps: Boards → Queries → Import work items, then Save items. In a Scrum project, rename User Story to Product Backlog Item first.', 8000);
+}
+
 async function saveToFolder() {
   const w = pipWin || window;
   if (!w.showDirectoryPicker) { toast('This browser cannot save to a folder. Chrome and Edge can; use Download instead.', 4500); return; }
@@ -3314,9 +3665,12 @@ function setMarkMode(on) {
 
 function updateEmpty() {
   const empty = state.nodes.size === 0 && state.groups.size === 0;
-  $('#start').hidden = !empty || started;
-  $('#waiting').hidden = !empty || !started;
-  $('#composer').hidden = empty;
+  // Only pictures on the board: the start card stays, so the first paste still carries the instructions.
+  const onlyPics = !empty && !state.groups.size && [...state.nodes.values()].every(n => n.shape === 'image');
+  $('#start').hidden = !(empty || onlyPics) || started;
+  $('#waiting').hidden = !(empty || onlyPics) || !started;
+  $('#composer').hidden = empty || onlyPics;
+  paintPicChips();
 }
 
 async function copyStarter() {
@@ -3328,13 +3682,23 @@ async function copyStarter() {
 // Start: copy the instructions and float the board. The waiting card then shows how to finish in the chat.
 let started = false;
 function startLoop() {
-  const copying = copyText(starterText($('#first').value.trim()));
+  const pics = picturesToSend({ all: true });
+  const first = $('#first').value.trim();
+  let one = false;
+  const copying = copyPacket(m => starterText(first, pics, m), pics).then(r => { one = r.oneImage; return r.ok; });
   // Floating uses up the click, so the chat opens from its own button on the waiting card.
   // Without a float the click is still free, and the chat opens straight away.
-  const floating = canFloat && !pipWin ? floatBoard() : null;
-  if (!canFloat && ai().url) window.open(ai().url, 'kiertotie-chat');
+  const go = () => {
+    const f = canFloat && !pipWin ? floatBoard() : null;
+    if (!canFloat && ai().url) window.open(ai().url, 'kiertotie-chat');
+    return f;
+  };
+  // With a picture, the copy finishes first: the floating window takes the focus, and Chrome cancels a copy
+  // that is still going. The click stays usable for a few seconds, which is plenty.
+  const floating = pics.length ? Promise.race([copying, new Promise(r => setTimeout(r, 1500))]).then(go) : go();
   started = true; updateEmpty();
-  copying.then(ok => toast(ok ? `Instructions copied. In ${ai().short}, press ${key}V and send.` : 'Copying failed: use Copy the instructions again.', 6000));
+  copying.then(ok => toast(!ok ? 'Copying failed: use Copy the instructions again.' : pics.length ? (one ? `Copied as one picture. In ${ai().short}, press ${key}V and send.` : `Instructions copied. In ${ai().short}, press ${key}V, then Copy picture.`)
+    : `Instructions copied. In ${ai().short}, press ${key}V and send.`, 6000));
   return floating;
 }
 
@@ -3420,6 +3784,15 @@ $('#ctx').addEventListener('change', ctxChange);
 onDoc('pointerdown', e => { if (!e.target.closest?.('.pop, #rail, .tools, #start, .boards')) closePops(); });
 $('#btn-undo').addEventListener('click', undo);
 $('#btn-done').addEventListener('click', done);
+$('#sent-pic').addEventListener('click', copyLastPicture);
+$('#sent-copytext').addEventListener('click', copyLastText);
+$('#sent-close').addEventListener('click', () => { $('#sent-bar').hidden = true; });
+$('#start-pics').addEventListener('click', e => {
+  if (!e.target.closest('[data-unpic]')) return;
+  pushUndo();
+  for (const n of picturesToSend({ all: true })) removeItem(n.id);
+  commit('board', 'Removed the pictures'); updateEmpty();
+});
 $('#ask').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); done(); } });
 $('#first').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); startLoop(); } });
 $('#btn-start').addEventListener('click', startLoop);
@@ -3436,7 +3809,9 @@ $('#docked-reset').addEventListener('click', async () => {
 function startOver() {
   const hasDiagram = state.nodes.size || state.groups.size;
   if (hasDiagram && !(pipWin || window).confirm('Clear this board and start over?')) return;
-  pushUndo(); parseInto('flowchart LR', { replace: true }); state.pos.clear(); showNote('');
+  // keep: false clears everything, pictures, ink and comments included.
+  pushUndo(); parseInto('flowchart LR', { replace: true, keep: false }); state.pos.clear(); showNote('');
+  lastSent = null; showSentBar();
   started = false; commit('board', 'Started over'); updateEmpty();
 }
 
@@ -3455,6 +3830,12 @@ function setTheme(t) {
 $('#ai-chips').addEventListener('click', e => { const b = e.target.closest('[data-ai]'); if (b) setAi(b.dataset.ai); });
 $('#start-sample').addEventListener('click', () => { applyText(SAMPLE, 'sample'); updateEmpty(); });
 $('#note-close').addEventListener('click', () => showNote(''));
+$('#note-merge').addEventListener('click', () => {
+  const o = mergeOffer; if (!o) return;
+  undo();
+  const r = applyText(o.src, 'link');
+  showNote('Kept the board and merged the changes into it', r.warnings || []);
+});
 $('.tools').addEventListener('click', e => {
   const pick = e.target.closest('[data-ai]'); if (pick) { setAi(pick.dataset.ai); closeMore(); toast(`Assistant: ${ai().name}`); return; }
   const act = e.target.closest('[data-act]')?.dataset.act;
@@ -3469,6 +3850,7 @@ $('.tools').addEventListener('click', e => {
   if (act === 'legend') addLegend();
   if (act === 'nosteps') clearSteps();
   if (act === 'drawio') exportDrawio();
+  if (act === 'ado') downloadAdo();
   if (act === 'mmd') downloadBoardFile();
   if (act === 'folder') saveToFolder();
   if (act === 'open') pickFiles();

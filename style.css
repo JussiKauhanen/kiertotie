@@ -540,3 +540,37 @@ body.floating .tools .primary-menu > summary::before { content: "↗"; }
 .edge .label-bg { fill: var(--surface); stroke: var(--border); stroke-width: 1; }
 .edge text { fill: var(--muted); font-weight: 500; }
 #note-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: min(720px, 70vw); }
+
+/* Backlog tickets: Azure DevOps style cards */
+.node.ticket .node-shape { fill: var(--nf, var(--surface)); stroke: var(--ns, var(--border)); stroke-width: 1; filter: drop-shadow(0 1px 2px rgba(16, 24, 40, .12)); }
+.node.ticket.sel .node-shape { stroke: var(--accent); stroke-width: 2; }
+.node.ticket .ticket-icon path { stroke-width: 1; stroke-linejoin: round; }
+.node.ticket text { font-family: var(--font); fill: var(--nt, var(--text)); }
+.node.ticket .ticket-type { font-size: 11px; font-weight: 500; fill: var(--muted); }
+.node.ticket .ticket-num { font-weight: 600; fill: var(--nt, var(--text)); }
+.node.ticket .ticket-title { font-size: 13px; font-weight: 600; }
+.node.ticket .ticket-meta { font-size: 11.5px; fill: var(--muted); }
+
+.note button.note-merge { background: var(--accent); color: #fff; border-radius: 6px; padding: 4px 10px; font-weight: 600; white-space: nowrap; }
+
+/* Pictures going along with Send */
+.pic-chip { align-self: center; white-space: nowrap; font-size: 12px; font-weight: 600; color: var(--accent); background: var(--accent-soft); border-radius: 999px; padding: 4px 10px; margin: 0; }
+.start .pic-chip { display: inline-block; margin: 0 0 8px; }
+.pic-chip[hidden] { display: none !important; }
+.sent-bar { position: absolute; bottom: 74px; left: 50%; transform: translateX(-50%); z-index: 16; display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  width: max-content; max-width: calc(100% - 20px); padding: 8px 10px 8px 14px; border-radius: 10px; background: var(--surface); box-shadow: var(--shadow); font-size: 13px; }
+.sent-bar[hidden] { display: none; }
+.sent-bar button { padding: 4px 10px; border-radius: 6px; }
+.sent-bar #sent-close { border: 0; background: none; color: var(--muted); padding: 2px 6px; }
+body.floating .sent-bar { bottom: 62px; }
+body:has(.sent-bar:not([hidden])) .toast { bottom: 130px; }
+
+.start-pics { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 0 0 10px; font-size: 12px; font-weight: 600; color: var(--accent); }
+.start-pics[hidden] { display: none; }
+.start-pics img { width: 56px; height: 40px; object-fit: cover; border-radius: 6px; border: 1px solid var(--border); background: #fff; }
+.start-pics .link { font-size: 12px; font-weight: 500; }
+.sent-bar #sent-pic { background: var(--accent); color: #fff; border-color: var(--accent); font-weight: 600; }
+.sent-bar #sent-copytext { border: 0; background: none; padding: 2px 4px; font-size: 12px; }
+.sent-bar b { display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; background: var(--accent); color: #fff; font-size: 11px; margin-right: 2px; }
+.node.image.faded { opacity: .28; filter: grayscale(.6); transition: opacity .15s, filter .15s; }
+.node.image.faded:hover, .node.image.faded.sel, .node.image.faded.marked { opacity: 1; filter: none; }

@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Kiertotie</title>
 <meta name="description" content="A diagram board for AI chats that can only chat: the chat answers with a link, you edit, Send passes it back.">
-<link rel="stylesheet" href="style.css?v=20261030-2">
+<link rel="stylesheet" href="style.css?v=20261102-6">
 </head>
 <body>
 <header class="bar">
@@ -54,6 +54,7 @@
         <button data-act="png" role="menuitem">PNG image</button>
         <button data-act="svg" role="menuitem">SVG image</button>
         <button data-act="drawio" role="menuitem">draw.io file</button>
+        <button data-act="ado" role="menuitem">Azure DevOps tickets (.csv)</button>
         <button data-act="mmd" role="menuitem">This board (.mmd)</button>
         <button data-act="folder" role="menuitem">All boards to a folder…</button>
       </div>
@@ -81,6 +82,7 @@
   <span class="note-label">Latest change</span>
   <span id="note-text"></span>
   <span id="note-warn" class="note-warn" hidden></span>
+  <button id="note-merge" class="note-merge" hidden></button>
   <button id="note-close" aria-label="Hide">✕</button>
 </div>
 
@@ -105,7 +107,8 @@
         <div id="ai-chips" class="ai-chips" role="radiogroup"></div>
       </fieldset>
       <label for="first">What should it draw? <span class="muted">(optional)</span></label>
-      <textarea id="first" rows="3" placeholder="e.g. how an AD group grants access to an Azure web app"></textarea>
+      <textarea id="first" rows="3" placeholder="e.g. how an AD group grants access to an Azure web app. You can paste a picture here too."></textarea>
+      <div id="start-pics" class="start-pics" hidden></div>
       <button id="btn-start" class="big"></button>
       <p id="start-help" class="muted small"></p>
       <div class="row-links"><button id="start-sample" class="link">or look at a sample first</button><button id="start-template" class="link">start from a template</button></div>
@@ -148,6 +151,7 @@
       <button data-shape="hexagon" title="Hexagon"><svg viewBox="0 0 28 20"><path d="M7 3 H21 L26 10 L21 17 H7 L2 10 Z"/></svg></button>
       <button data-shape="table" title="Table"><svg viewBox="0 0 28 20"><rect x="3" y="3" width="22" height="14" rx="1.5"/><path d="M3 8 H25 M3 12.5 H25 M11 3 V17 M18 3 V17"/></svg></button>
       <button data-shape="doc" title="Doc: a card with longer text"><svg viewBox="0 0 28 20"><path d="M7 2 H18 L22 6 V18 H7 Z M10 8 H18 M10 11 H19 M10 14 H16"/></svg></button>
+      <button data-shape="story" title="Ticket: an Azure DevOps style work item"><svg viewBox="0 0 28 20"><rect x="3" y="3" width="22" height="14" rx="2"/><path d="M5 3 V17" stroke-width="3"/><path d="M9 8 H21 M9 12 H17"/></svg></button>
     </div>
     <div id="icon-pop" class="pop icon-pop" hidden aria-label="Icons">
       <input id="icon-q" type="search" placeholder="Search icons, e.g. key vault" autocomplete="off" aria-label="Search icons">
@@ -195,7 +199,14 @@
   </aside>
 </main>
 
+<div id="sent-bar" class="sent-bar" hidden role="status">
+  <span id="sent-text"></span>
+  <button id="sent-pic" class="primary">Copy picture</button>
+  <button id="sent-copytext" class="link">copy the text again</button>
+  <button id="sent-close" aria-label="Hide">✕</button>
+</div>
 <footer id="composer" class="composer" hidden>
+  <span id="pic-chip" class="pic-chip" hidden></span>
   <input id="ask" type="text" autocomplete="off">
   <button id="btn-done" class="done"></button>
 </footer>
@@ -230,6 +241,6 @@
 
 <!-- Bump ?v= on every release, so a page never pairs with a cached older script (GitHub Pages caches for 10 minutes). -->
 <script src="vendor/qrcode.js?v=1"></script>
-<script src="app.js?v=20261030-2"></script>
+<script src="app.js?v=20261102-6"></script>
 </body>
 </html>
