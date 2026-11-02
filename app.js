@@ -180,6 +180,7 @@ function styleProps(text) {
   for (const part of text.replace(/;$/, '').split(',')) {
     const [k, v] = part.split(':').map(x => x && x.trim());
     if (['fill', 'stroke', 'color'].includes(k) && v && COLOR_RE.test(v)) st[k] = v;
+    if (k === 'font-size' && /^\d+(\.\d+)?(px)?$/.test(v || '')) st[k] = `${Math.min(200, Math.max(6, parseFloat(v)))}px`;
   }
   return st;
 }
@@ -522,6 +523,25 @@ function wrapLabel(label, maxW, size = 14, weight = 500) {
   return out;
 }
 
+// Text size: a box's own (style id font-size:18px), or none for Auto.
+const fsOf = n => { const v = parseFloat(n?.style?.['font-size']); return v > 0 ? v : null; };
+// Shapes whose text has a size to pick: Auto fits the text to the box, as in Miro.
+const SIZED_TEXT = n => n && !isUi(n) && !isTicket(n) && !['icon', 'image', 'table', 'doc', 'phone', 'browser'].includes(n.shape);
+// Auto: the largest size, between lo and hi, at which the wrapped text fits w × h. Remembered, as resizing asks often.
+const fitCache = new Map();
+function fitFont(label, w, h, lo, hi, weight = 500) {
+  const key = `${label}|${Math.round(w)}|${Math.round(h)}|${lo}|${hi}|${weight}|${state.theme}`;
+  if (fitCache.has(key)) return fitCache.get(key);
+  const fits = sz => { const ls = wrapLabel(label, w, sz, weight); return ls.length * sz * 1.3 <= h && ls.every(l => textWidth(l, sz, weight) <= w); };
+  let a = lo, b = hi;
+  if (!fits(lo)) b = lo; else if (fits(hi)) a = hi; else while (b - a > 0.5) { const m = (a + b) / 2; if (fits(m)) a = m; else b = m; }
+  const out = Math.floor(a * 2) / 2;
+  if (fitCache.size > 2000) fitCache.clear();
+  fitCache.set(key, out);
+  return out;
+}
+const lineStep = (fs, base, step) => fs === base ? step : Math.round(fs * 1.3 * 10) / 10;
+
 // p: the hand-set size, if the user resized the box.
 function nodeSize(n, p = {}) {
   const fw = p.w, fh = p.h || 0;
@@ -535,8 +555,9 @@ function nodeSize(n, p = {}) {
     return { w, h: Math.max(fh, 40 + lines.length * 18 + (meta.length ? 2 + meta.length * 15 : 0)), lines, meta, ticket: t };
   }
   if (n.shape === 'sticky') {
-    const w = fw || 160, lines = wrapLabel(n.label, w - 28);
-    return { w, h: Math.max(fh || w, lines.length * 18 + 28), lines };
+    // Auto: short notes write big and long ones small, as on a real sticky note.
+    const w = fw || 160, h0 = fh || w, fs = fsOf(n) || fitFont(n.label, w - 28, h0 - 28, 10, 24), lh = lineStep(fs, 14, 18), lines = wrapLabel(n.label, w - 28, fs);
+    return { w, h: Math.max(h0, lines.length * lh + 28), lines, fs, lh };
   }
   if (n.shape === 'table') {
     // Columns as wide as their widest cell; the caption sits above the grid.
@@ -554,19 +575,28 @@ function nodeSize(n, p = {}) {
   if (n.shape === 'browser') return { w: fw || 440, h: fh || 280, lines: [n.label] };
   if (n.shape === 'image') return { w: fw || 240, h: fh || 160, lines: [] };
   if (n.shape === 'text') {
-    const lines = wrapLabel(n.label, fw ? fw - 8 : 320, 16);
-    const tw = Math.max(0, ...lines.map(l => textWidth(l, 16)));
-    return { w: fw || Math.max(40, tw + 12), h: Math.max(fh, lines.length * 21 + 10), lines };
+    // Auto: a text box resized by its corner scales its text to fill it.
+    const fs = fsOf(n) || (fw && fh ? fitFont(n.label, fw - 8, fh - 10, 8, 96, 600) : 16), lh = lineStep(fs, 16, 21);
+    const lines = wrapLabel(n.label, fw ? fw - 8 : 320 * fs / 16, fs, 600);
+    const tw = Math.max(0, ...lines.map(l => textWidth(l, fs, 600)));
+    return { w: fw || Math.max(40, tw + 12), h: Math.max(fh, lines.length * lh + 10), lines, fs, lh };
   }
-  const lines = wrapLabel(n.label, fw ? fw - 24 : 200);
-  const tw = Math.max(...lines.map(l => textWidth(l)));
-  let w = Math.max(100, tw + 32), h = Math.max(44, lines.length * 18 + 24);
+  // The room for text inside a shape of this size.
+  const inner = (w, h) => n.shape === 'diamond' ? [w * 0.6, h * 0.6] : n.shape === 'circle' ? [w * 0.72, h * 0.72]
+    : n.shape === 'hexagon' || n.shape === 'flag' ? [w - 52, h - 16] : [w - 24, h - 16];
+  const fixed = fsOf(n);
+  // Auto: the usual 14, and once the box has been resized, whatever fills it.
+  const fs = fixed || (fw ? fitFont(n.label, ...inner(fw, fh || 44), 9, 48) : 14), lh = lineStep(fs, 14, 18);
+  const lines = wrapLabel(n.label, fw ? inner(fw, fh || 44)[0] : 200 * fs / 14, fs);
+  const tw = Math.max(...lines.map(l => textWidth(l, fs)));
+  const pad = fs / 14;
+  let w = Math.max(100, tw + 32 * pad), h = Math.max(44, lines.length * lh + 24 * pad);
   if (n.shape === 'circle') w = h = Math.max(w, h, 64);
-  else if (n.shape === 'diamond') { w = Math.max(110, tw * 1.35 + 52); h = Math.max(64, lines.length * 18 + 46); }
+  else if (n.shape === 'diamond') { w = Math.max(110, tw * 1.35 + 52 * pad); h = Math.max(64, lines.length * lh + 46 * pad); }
   else if (n.shape === 'hexagon' || n.shape === 'flag') w += 24;
   else if (n.shape === 'cylinder') h += 14;
-  if (fw) { w = fw; h = Math.max(fh, lines.length * 18 + 16); }
-  return { w, h, lines };
+  if (fw) { w = fw; h = Math.max(fh, lines.length * lh / (n.shape === 'diamond' ? 0.6 : n.shape === 'circle' ? 0.72 : 1) + (n.shape === 'diamond' || n.shape === 'circle' ? 0 : 16)); }
+  return { w, h, lines, fs, lh };
 }
 
 // ---------- screens: devices and wireframe pieces ----------
@@ -889,9 +919,26 @@ function setBoardStyle(k) {
   commit('board', `${BOARD_STYLES[k].name} style`);
   paintStyles();
 }
+// Each board style as a small preview card: two boxes and a line in its own colours and font, as in orim.
+// Classic follows day and night, so its card uses the page's own colours.
+const STYLE_LOOK = {
+  classic: { bg: 'var(--bg)', node: 'var(--surface)', stroke: 'var(--node-stroke)', text: 'var(--text)', edge: 'var(--edge)' },
+  pastel: { bg: '#fbf8f3', node: '#ffffff', stroke: '#3d3d3d', text: '#262626', edge: '#7a7a7a', a: '#56b8a6', b: '#e3a93c' },
+  midnight: { bg: '#2d2f4e', node: '#2d2f4e', stroke: '#c9cbe0', text: '#ffffff', edge: '#b8bbd6', a: '#6cc7b9', b: '#f6c97f' },
+  blueprint: { bg: '#1f4f8f', node: 'rgba(255,255,255,.08)', stroke: '#e6f0ff', text: '#ffffff', edge: '#cfe0ff' },
+  sketch: { bg: '#f7f4ec', node: '#fffdf7', stroke: '#3a3a3a', text: '#2a2a2a', edge: '#3a3a3a' },
+};
+function stylePreview(k) {
+  const L = STYLE_LOOK[k], font = esc(BOARD_STYLES[k].font || 'var(--font)');
+  const box = (x, y, t, line) => `<rect x="${x}" y="${y}" width="34" height="19" rx="${k === 'sketch' ? 3 : 5}" style="fill:${L.node};stroke:${line}" stroke-width="1.6"/>` +
+    `<text x="${x + 17}" y="${y + 13}" text-anchor="middle" style="fill:${L.text};font-family:${font}" font-size="9.5" font-weight="600">${t}</text>`;
+  return `<svg viewBox="0 0 124 66" aria-hidden="true"><rect width="124" height="66" style="fill:${L.bg}"/>` +
+    `<path d="M48 23.5 C72 23.5, 54 43.5, 76 43.5" fill="none" style="stroke:${L.edge}" stroke-width="1.4"${k === 'sketch' ? ' stroke-dasharray="0"' : ''}/>` +
+    box(14, 14, 'Aa', L.a || L.stroke) + box(76, 34, 'Bb', L.b || L.stroke) + '</svg>';
+}
 function paintStyles() {
   const cur = state.theme || 'classic';
-  $('#style-picks').innerHTML = Object.entries(BOARD_STYLES).map(([k, t]) => `<button type="button" class="style-pick" data-bstyle="${k}" aria-pressed="${k === cur}" title="${t.name}"><span class="style-sw" data-sw="${k}"></span>${t.name}</button>`).join('');
+  $('#style-picks').innerHTML = Object.entries(BOARD_STYLES).map(([k, t]) => `<button type="button" class="style-card" data-bstyle="${k}" aria-pressed="${k === cur}" title="${t.name}${k === 'classic' ? ': follows day and night' : ''}"><span class="sc-prev">${stylePreview(k)}</span><span class="sc-name">${t.name}</span></button>`).join('');
 }
 
 // ---------- architecture: zones, line types, steps ----------
@@ -1000,9 +1047,9 @@ function shapeSvg(b) {
   }
 }
 
-function textSvg(lines, dy = 0, step = 18) {
+function textSvg(lines, dy = 0, step = 18, fs = null) {
   const start = -(lines.length - 1) * step / 2 + dy;
-  return `<text text-anchor="middle" dominant-baseline="central">${lines.map((l, i) => `<tspan x="0" y="${start + i * step}">${esc(l)}</tspan>`).join('')}</text>`;
+  return `<text text-anchor="middle" dominant-baseline="central"${fs ? ` style="font-size:${fs}px"` : ''}>${lines.map((l, i) => `<tspan x="0" y="${start + i * step}">${esc(l)}</tspan>`).join('')}</text>`;
 }
 
 // What goes inside a node's <g>, centred on 0,0.
@@ -1075,7 +1122,7 @@ function nodeInner(n, b) {
     const lines = b.lines, start = top + 50 + 7;
     return shapeSvg(b) + pic + `<text class="icon-label" text-anchor="middle" dominant-baseline="central">${lines.map((l, i) => `<tspan x="0" y="${start + i * 15}">${esc(l)}</tspan>`).join('')}</text>`;
   }
-  if (n.shape === 'text') return shapeSvg(b) + textSvg(b.lines, 0, 21);
+  if (n.shape === 'text') return shapeSvg(b) + textSvg(b.lines, 0, b.lh || 21, b.fs);
   if (isTicket(n)) {
     const T = TICKETS[n.shape], t = b.ticket, x0 = -b.w / 2, y0 = -b.h / 2, ty = y0 + 36 + b.lines.length * 18;
     return `<rect class="node-shape" x="${x0}" y="${y0}" width="${b.w}" height="${b.h}" rx="4"/>` +
@@ -1125,7 +1172,7 @@ function nodeInner(n, b) {
     return n.src ? `<rect class="node-shape image-frame" x="${x0}" y="${y0}" width="${b.w}" height="${b.h}" rx="4"/><image href="${n.src}" x="${x0}" y="${y0}" width="${b.w}" height="${b.h}" preserveAspectRatio="xMidYMid meet"/>`
       : `${r} rx="4"/>${textSvg(['Image missing'])}`;
   }
-  return shapeSvg(b) + textSvg(b.lines, n.shape === 'cylinder' ? 4 : 0);
+  return shapeSvg(b) + textSvg(b.lines, n.shape === 'cylinder' ? 4 : 0, b.lh || 18, b.fs);
 }
 
 // Where a line leaves a box: the middle of the side facing the other end.
@@ -1279,13 +1326,14 @@ function render() {
   const step = 20 * view.k * (view.k < 0.5 ? 2 : 1);
   svg.style.backgroundSize = `${step}px ${step}px`;
   svg.style.backgroundPosition = `${view.x}px ${view.y}px`;
+  paintZoom();
   if (Icons.state === 'idle' && ([...state.nodes.values()].some(n => n.shape === 'icon') || [...state.groups.values()].some(g => ZONES[zoneOf(g)]?.icon))) loadIcons();
   for (const gid of [...groupBoxes.keys()].sort((a, b) => groupDepth(a) - groupDepth(b))) {
     const g = state.groups.get(gid), b = groupBoxes.get(gid);
     const Z = ZONES[zoneOf(g)];
     // A section: a top-level frame holding other frames or screens, such as one journey of several.
     const section = isSection(gid);
-    const cls = ['group', Z && 'zone', section && 'section', g.marked && 'marked', isSel(`g:${gid}`) && 'sel'].filter(Boolean).join(' ');
+    const cls = ['group', Z && 'zone', section && 'section', g.marked && 'marked', isSel(`g:${gid}`) && 'sel', drag?.kind === 'connect' && drag.target === gid && 'drop-target'].filter(Boolean).join(' ');
     const a = Z ? Z.stroke : accentOf(gid);
     const ic = Z?.icon && iconFor(Z.icon), x0 = b.x - b.w / 2, y0 = b.y - b.h / 2;
     // The title sits above the frame, as in Miro and orim; a screen draws its device instead of a frame.
@@ -1293,9 +1341,14 @@ function render() {
     const zs = Math.min(isSection(gid) ? 2.4 : 1.8, Math.max(1, 0.7 / view.k)), fs = (isSection(gid) ? 15 : 12.5) * zs;
     const title = (ic ? `<image href="${ic.uri}" x="${x0}" y="${y0 - 8 - 11 * zs}" width="${15 * zs}" height="${15 * zs}"/>` : '') +
       `<text class="group-title" x="${x0 + (ic ? 20 * zs : 2)}" y="${y0 - 11 * zs}" dominant-baseline="central" style="font-size:${fs}px">${esc(g.title)}</text>`;
+    // The grip: a move handle at the right end of the title row (or just after a long title), shown on hover.
+    const gs = 20 * zs, tw = (ic ? 20 * zs : 2) + textWidth(g.title, fs, isSection(gid) ? 700 : 600) + 8 * zs;
+    const gx = Math.max(x0 + tw, x0 + b.w - gs), gy = y0 - 22 * zs;
+    const grip = `<rect class="group-bar" x="${x0}" y="${gy}" width="${gx + gs - x0}" height="${gs}"/>` +
+      `<g class="frame-grip" transform="translate(${gx},${gy}) scale(${gs / 20})"><title>Drag to move the frame</title><rect width="20" height="20" rx="5"/><path d="M10 3.5 V16.5 M3.5 10 H16.5 M10 3.5 L8 5.5 M10 3.5 L12 5.5 M10 16.5 L8 14.5 M10 16.5 L12 14.5 M3.5 10 L5.5 8 M3.5 10 L5.5 12 M16.5 10 L14.5 8 M16.5 10 L14.5 12"/></g>`;
     if (g.dev) { html += `<g class="${cls} screen" data-group="${esc(gid)}">${deviceSvg(g.dev, b, isSel(`g:${gid}`))}${title}</g>`; continue; }
     html += `<g class="${cls}" data-group="${esc(gid)}"${colorVars(g, a && { stroke: a, fill: `color-mix(in srgb, ${a} ${Z ? 5 : 9}%, transparent)` })}>` +
-      `<rect x="${x0}" y="${y0}" width="${b.w}" height="${b.h}" rx="8"${Z ? ` style="stroke-dasharray:${Z.dash || 'none'}"` : ''}/>${title}</g>`;
+      `<rect x="${x0}" y="${y0}" width="${b.w}" height="${b.h}" rx="8"${Z ? ` style="stroke-dasharray:${Z.dash || 'none'}"` : ''}/>${grip}${title}</g>`;
   }
   // Labels already placed, and the boxes, so labels can step aside from them.
   collectObstacles();
@@ -1342,7 +1395,7 @@ function render() {
     const n = state.nodes.get(id), pic = n.shape === 'image';
     const kind = isUi(n) ? 'ui' : isTicket(n) ? 'ticket' : ['sticky', 'text', 'icon', 'table', 'doc', 'phone', 'browser', 'image'].includes(n.shape) ? n.shape : '';
     // A picture already sent to the chat fades, so the editable diagram stands out; hover or select to compare.
-    const cls = ['node', kind, n.marked && 'marked', isSel(`n:${id}`) && 'sel', flash.has(id) && `flash-${flash.get(id)}`, n.sent && kind === 'image' && 'faded'].filter(Boolean).join(' ');
+    const cls = ['node', kind, n.marked && 'marked', isSel(`n:${id}`) && 'sel', drag?.kind === 'connect' && drag.target === id && 'drop-target', flash.has(id) && `flash-${flash.get(id)}`, n.sent && kind === 'image' && 'faded'].filter(Boolean).join(' ');
     const a = (!kind || kind === 'table' || kind === 'doc') && accentOf(n.group);
     const g = `<g class="${cls}" data-node="${esc(id)}" transform="translate(${b.x},${b.y})"${colorVars(n, a && { stroke: a })}>${nodeInner(n, b)}</g>`;
     if (pic) pics += g; else html += g;
@@ -1356,8 +1409,10 @@ function render() {
     html += `<rect class="marquee" x="${x}" y="${y}" width="${Math.abs(drag.x1 - drag.x0)}" height="${Math.abs(drag.y1 - drag.y0)}"/>`;
   }
   if (drag?.kind === 'connect' && drag.to) {
-    const a = boxes.get(drag.from), s = sideOf(a, drag.to);
-    html += `<path class="ghost" d="M${s.x},${s.y} L${drag.to.x},${drag.to.y}"/>`;
+    // Over a box, the line snaps to its side.
+    const a = boxes.get(drag.from), tb = drag.target && anchorBox(drag.target);
+    const end = tb ? sideOf(tb, a) : drag.to, s = sideOf(a, tb || drag.to);
+    html += `<path class="ghost${tb ? ' snapped' : ''}" d="M${s.x},${s.y} L${end.x},${end.y}"/>`;
   }
   vp.innerHTML = pics + html;
   updateEmpty();
@@ -1418,12 +1473,35 @@ function handlesSvg() {
   return out;
 }
 
+// Where a line being dragged lands: the box under the pointer, or one within a few pixels of it, so a drop just
+// short of the edge still connects. Inside several (a piece on a screen), the smallest. A frame by its title or its edge.
+function connectTarget(p, from) {
+  const m = 16 / view.k, gap = (b) => Math.hypot(Math.max(0, Math.abs(p.x - b.x) - b.w / 2), Math.max(0, Math.abs(p.y - b.y) - b.h / 2));
+  let best = null, score = Infinity;
+  for (const [id, b] of boxes) {
+    if (id === from) continue;
+    const d = gap(b); if (d > m) continue;
+    const sc = d === 0 ? -1e9 + b.w * b.h : d;
+    if (sc < score) { best = id; score = sc; }
+  }
+  if (best) return best;
+  const fromGroup = state.nodes.get(from)?.group;
+  for (const [gid, b] of groupBoxes) {
+    if (gid === fromGroup && !deviceOf(gid)) continue;
+    const x0 = b.x - b.w / 2, x1 = x0 + b.w, y0 = b.y - b.h / 2, y1 = y0 + b.h;
+    if (p.x < x0 - m || p.x > x1 + m || p.y < y0 - FRAME_TITLE - m || p.y > y1 + m) continue;
+    const onTitle = p.y < y0, onEdge = Math.min(Math.abs(p.x - x0), Math.abs(p.x - x1), Math.abs(p.y - y0), Math.abs(p.y - y1)) <= m;
+    if (deviceOf(gid) || onTitle || onEdge) return gid;
+  }
+  return null;
+}
+
 // Everything drawn on the board, as boxes: for fitting the view, the minimap and exports.
 function contentBoxes() { return [...boxes.values(), ...groupBoxes.values(), ...state.ink.map(inkBox), ...state.comments.map(commentBox)]; }
 
 // Zoom to a box (a screen, or the selection), leaving room for the bars.
 function zoomTo(b) {
-  const r = svg.getBoundingClientRect(), L = 64, R = 20, T = 64, B = 76;
+  const r = svg.getBoundingClientRect(), L = 64, R = 20, T = 20, B = 64;
   const k = Math.min(2, (r.width - L - R) / (b.w + 40), (r.height - T - B) / (b.h + 60));
   view = { k, x: L + (r.width - L - R) / 2 - b.x * k, y: T + (r.height - T - B) / 2 - b.y * k };
   render();
@@ -1437,7 +1515,7 @@ function fit() {
   const x0 = Math.min(...all.map(b => b.x - b.w / 2)), x1 = Math.max(...all.map(b => b.x + b.w / 2));
   const y0 = Math.min(...all.map(b => b.y - b.h / 2)), y1 = Math.max(...all.map(b => b.y + b.h / 2));
   // Leave room for the rail on the left, the bar on top and the request box at the bottom.
-  const L = 64, R = 20, T = $('#note').hidden ? 64 : 112, B = 76;
+  const L = 64, R = 24, T = 24, B = 64;
   const k = Math.min(1.4, (W - L - R) / (x1 - x0 || 1), (H - T - B) / (y1 - y0 || 1));
   view = { k, x: L + (W - L - R) / 2 - (x0 + x1) / 2 * k, y: T + (H - T - B) / 2 - (y0 + y1) / 2 * k };
   render();
@@ -1578,7 +1656,7 @@ function openBoard(id) {
   store.set(CURRENT_KEY, id);
   parseInto('flowchart LR', { replace: true, keep: false }); state.pos.clear();
   load();
-  undoStack.length = 0; sel = null; started = false; showNote('');
+  undoStack.length = 0; sel = null; started = false; landingOff = false; lastSent = null; showNote('');
   layout(); render(); $('#source').value = toMermaid(); updateReadout(); paintBoardName();
   fit(); updateEmpty();
 }
@@ -1610,8 +1688,8 @@ function duplicateBoard(id) {
 }
 
 function paintBoardName() {
-  const el = $('#board-name'); if (!el) return;
-  el.textContent = currentBoard().name;
+  const el = $('#title'); if (!el) return;
+  if (doc().activeElement !== el) el.value = currentBoard().name;
   document.title = `${currentBoard().name} · Kiertotie`;
 }
 
@@ -1887,7 +1965,7 @@ svg.addEventListener('pointermove', e => {
   if (!drag) return;
   if (drag.kind === 'pan') { view.x = drag.vx + e.clientX - drag.sx; view.y = drag.vy + e.clientY - drag.sy; moveView(); return; }
   const p = toWorld(e);
-  if (drag.kind === 'connect') { drag.to = p; render(); return; }
+  if (drag.kind === 'connect') { drag.to = p; drag.target = connectTarget(p, drag.from); render(); return; }
   if (drag.kind === 'erase') { eraseAt(e); return; }
   if (drag.kind === 'ink') {
     const pts = drag.ink.pts, last = pts[pts.length - 1];
@@ -1953,8 +2031,7 @@ svg.addEventListener('pointerup', e => {
     return;
   }
   if (d.kind === 'connect') {
-    const target = doc().elementFromPoint(e.clientX, e.clientY)?.closest('[data-node],[data-group]');
-    const to = target?.dataset.node || target?.dataset.group;
+    const to = d.to && connectTarget(d.to, d.from);
     if (to && to !== d.from) {
       pushUndo(); pinAll();
       if (!state.edges.some(x => x.from === d.from && x.to === to)) state.edges.push({ from: d.from, to, label: '', style: 'solid', arrow: true });
@@ -2016,6 +2093,7 @@ function moveView() {
     const step = 20 * view.k * (view.k < 0.5 ? 2 : 1);
     svg.style.backgroundSize = `${step}px ${step}px`;
     svg.style.backgroundPosition = `${view.x}px ${view.y}px`;
+    paintZoom();
   });
   clearTimeout(viewTimer);
   viewTimer = setTimeout(render, 160);
@@ -2128,6 +2206,7 @@ function openEditor(target) {
   if (multiline) ta.title = 'Ctrl+Enter or click outside to finish';
   const w = Math.max(120, b.w * view.k), h = Math.max(32, b.h * view.k);
   Object.assign(ta.style, { left: `${view.x + b.x * view.k - w / 2}px`, top: `${view.y + b.y * view.k - h / 2}px`, width: `${w}px`, height: `${h}px` });
+  if (target.type === 'node' && b.fs && !multiline) ta.style.fontSize = `${Math.max(11, b.fs * view.k)}px`;
   $('.board-wrap').append(ta);
   ta.focus(); ta.select();
   editor = { ta, target };
@@ -2207,7 +2286,7 @@ function addImage(file, p) {
     state.nodes.set(id, { id, label: (file.name || 'Image').replace(/\.\w+$/, ''), shape: 'image', src, group: groupAt(p), marked: false });
     state.pos.set(id, { x: p.x, y: p.y, w, h });
     // Behind the start card, a selected picture's toolbar would sit on top of the card.
-    sel = $('#start').hidden ? { type: 'node', id } : null;
+    sel = homeOpen ? null : { type: 'node', id };
     commit('board', `Added image ${id}`);
   };
   img.onerror = () => { URL.revokeObjectURL(url); toast('That picture could not be read'); };
@@ -2378,7 +2457,11 @@ onDoc('paste', e => {
   // A picture: it becomes an image on the board, also when pasted into the start box or the request box.
   const file = [...(e.clipboardData?.files || [])].find(f => f.type.startsWith('image/'))
     || [...(e.clipboardData?.items || [])].find(i => i.kind === 'file' && i.type.startsWith('image/'))?.getAsFile();
-  if (file) { e.preventDefault(); addImage(file, viewCentre()); toast($('#start').hidden ? 'Picture added. It goes along with your next Send.' : 'Picture added. It goes along when you start.'); return; }
+  if (file) {
+    e.preventDefault();
+    // On the home screen a picture starts a fresh board, unless the current one is still empty.
+    if (homeOpen) homePicture(file); else addImage(file, viewCentre()); toast(homeOpen ? 'Picture added. It goes along when you start.' : 'Picture added. It goes along with your next message.'); return;
+  }
   if (typing(e.target)) return;
   const text = e.clipboardData?.getData('text/plain') || '';
   // What Kiertotie itself copied: paste the items, not the Mermaid.
@@ -2387,7 +2470,7 @@ onDoc('paste', e => {
   if (!looksLikeDiagram(text) && !/\[|\(/.test(text)) { toast('That paste does not look like a diagram'); return; }
   e.preventDefault();
   const r = applyText(text, 'paste');
-  if (r.mergeOffer) showNote('Pasted a diagram', r.warnings || [], r.mergeOffer);
+  if (r.mergeOffer) showNote('Pasted a diagram', r.warnings || [], r.mergeOffer, r.message);
 });
 
 // ---------- minimap ----------
@@ -2718,19 +2801,76 @@ const TEMPLATES = [
     ['Welcome video from the team', NOTE.y], ['Buddy for the first month', NOTE.p], ['Laptop ready on day one', NOTE.b], ['Checklist app in Power Apps', NOTE.g], ['Weekly check-in with the lead', NOTE.o], ['Short quiz after week one', NOTE.v]]) },
 ];
 
-function paintTemplates() {
-  let html = '', cat = '';
-  for (const t of TEMPLATES) {
-    if (t.cat !== cat) { cat = t.cat; html += `<div class="pop-label">${esc(cat)}</div>`; }
-    html += `<button type="button" class="tpl" data-tpl="${t.id}"><span class="tpl-tint" style="background:${t.tint}"></span><span><strong>${esc(t.name)}</strong><span class="muted small">${esc(t.desc)}</span></span></button>`;
+// ---------- templates dialog and thumbnails ----------
+
+// A board drawn as a small picture: the real board draws it for a moment, unsaved, then gets its own content back.
+// pos: positions saved with a board. Pictures are cached per board style colours (day or night).
+const thumbCache = new Map();
+let thumbing = false;
+function boardThumb(src, pos = null) {
+  thumbing = true;
+  const saved = { ...state, pos: new Map(state.pos) }, keep = { boxes, groupBoxes, deviceRects, sel, flash, view: { ...view } };
+  let out = null;
+  try {
+    sel = null; flash = new Map(); state.pos = new Map();
+    parseInto(src, { replace: true, keep: false });
+    if (pos) state.pos = new Map(pos);
+    layout(); render();
+    out = exportSvg();
+  } catch { out = null; }
+  finally {
+    Object.assign(state, saved);
+    ({ boxes, groupBoxes, deviceRects, sel, flash } = keep); view = keep.view;
+    layout(); render();
+    thumbing = false;
   }
-  $('#template-list').innerHTML = html;
+  return out ? `data:image/svg+xml;charset=utf-8,${encodeURIComponent(out.svg)}` : null;
+}
+const thumbKey = id => `${id}|${getComputedStyle(svg).getPropertyValue('--bg').trim()}`;
+// Thumbnails come in one at a time, so the dialog opens at once and fills in.
+async function fillThumbs(root) {
+  await loadIcons();
+  for (const el of [...root.querySelectorAll('[data-thumb]:not(.ready)')]) {
+    const k = thumbKey(el.dataset.thumb);
+    if (!thumbCache.has(k)) {
+      await new Promise(r => setTimeout(r, 0));
+      const t = TEMPLATES.find(x => x.id === el.dataset.thumb);
+      let src = null, pos = null;
+      if (t) src = t.code;
+      else { try { ({ src, pos } = JSON.parse(store.get(boardKey(el.dataset.thumb)))); } catch { /* no saved board */ } }
+      thumbCache.set(k, src ? boardThumb(src, pos) : null);
+    }
+    const url = thumbCache.get(k);
+    el.innerHTML = url ? `<img src="${url}" alt="">` : '<span class="thumb-empty">Empty board</span>';
+    el.classList.add('ready');
+  }
+}
+const TPL_CATS = { Architecture: '<path d="M10 2.5 L17 6.5 V13.5 L10 17.5 L3 13.5 V6.5 Z M3 6.5 L10 10.5 L17 6.5 M10 10.5 V17.5"/>',
+  Screens: '<rect x="6" y="2.5" width="8" height="15" rx="2"/>', Process: '<rect x="3" y="3.5" width="14" height="13" rx="2"/><path d="M6.5 7.5 H13.5 M6.5 10.5 H13.5 M6.5 13.5 H10.5"/>',
+  Workshop: '<path d="M4 4 H16 V12 L12 16 H4 Z M16 12 H12 V16"/>' };
+let tplCat = 'All';
+const tplCard = t => `<button type="button" class="tpd-card" data-tpl="${t.id}"><span class="tpd-thumb" data-thumb="${t.id}" style="--tint:${t.tint}"></span><b>${esc(t.name)}</b><small>${esc(t.desc)}</small></button>`;
+function paintTplDialog() {
+  const q = $('#tpd-q').value.trim().toLowerCase();
+  const n = c => TEMPLATES.filter(t => c === 'All' || t.cat === c).length;
+  $('#tpd-side').innerHTML = ['All', ...Object.keys(TPL_CATS)].map(c => `<button type="button" data-tcat="${c}" aria-pressed="${c === tplCat}"><svg class="ic" viewBox="0 0 20 20" aria-hidden="true">${TPL_CATS[c] || '<rect x="3" y="3" width="6" height="6" rx="1"/><rect x="11" y="3" width="6" height="6" rx="1"/><rect x="3" y="11" width="6" height="6" rx="1"/><rect x="11" y="11" width="6" height="6" rx="1"/>'}</svg><span>${c === 'All' ? 'All templates' : c}</span><small>${n(c)}</small></button>`).join('');
+  const list = TEMPLATES.filter(t => (tplCat === 'All' || t.cat === tplCat) && (!q || `${t.name} ${t.desc} ${t.cat}`.toLowerCase().includes(q)));
+  $('#tpd-title').textContent = q ? `Matching "${$('#tpd-q').value.trim()}"` : tplCat === 'All' ? 'All templates' : tplCat;
+  $('#tpd-grid').innerHTML = list.map(tplCard).join('') || '<p class="muted">No template matches that. Try another word.</p>';
+  fillThumbs($('#tpd-grid'));
+}
+function openTemplates() {
+  closePops(); closeMore();
+  if ($('#boards').open) $('#boards').close();
+  $('#tpd-q').value = ''; tplCat = 'All';
+  paintTplDialog();
+  $('#tpl-dialog').showModal();
 }
 
 // A template fills an empty board; otherwise it opens as a new board, so nothing is lost.
 function useTemplate(id) {
   const t = TEMPLATES.find(x => x.id === id); if (!t) return;
-  closePops(); if ($('#boards').open) $('#boards').close();
+  closePops(); if ($('#boards').open) $('#boards').close(); if ($('#tpl-dialog').open) $('#tpl-dialog').close();
   if (!state.nodes.size && !state.groups.size) {
     applyText(t.code, 'template');
     if (/^(Untitled board|My board)$/.test(currentBoard().name)) renameBoard(boardId, t.name);
@@ -2751,7 +2891,6 @@ function openPop(name, { target = null } = {}) {
   if (wasOpen && !target) return;
   pop.hidden = false;
   for (const b of doc().querySelectorAll('#rail [data-pop]')) b.setAttribute('aria-expanded', String(b.dataset.pop === name));
-  if (name === 'template') paintTemplates();
   if (name === 'screen') paintScreenPop();
   if (name === 'draw') { if (!['pen', 'hl', 'arrow', 'eraser'].includes(tool)) setTool('pen'); pop.hidden = false; paintDrawColors(); }
   if (name === 'icon') { iconTarget = target; loadIcons(); renderIconGrid(); $('#icon-q').focus(); }
@@ -2790,6 +2929,22 @@ const ICON_SVG = {
 const glyph = name => `<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">${ICON_SVG[name]}</svg>`;
 
 let ctxKey = '';
+// Text size: Auto (with the size it comes to now), or a size of your own.
+const FONT_SIZES = [10, 12, 14, 16, 18, 20, 24, 28, 32, 40, 48, 64, 80];
+function fontPick(cur, autoNow) {
+  const list = cur && !FONT_SIZES.includes(cur) ? [...FONT_SIZES, cur].sort((a, b) => a - b) : FONT_SIZES;
+  return `<select data-font-size class="font-pick" title="Text size: Auto fits the text to the box">` +
+    `<option value=""${cur ? '' : ' selected'}>${autoNow ? `Auto · ${autoNow}` : 'Auto'}</option>${list.map(v => `<option value="${v}"${cur === v ? ' selected' : ''}>${v}</option>`).join('')}</select>`;
+}
+function setFontSize(items, v) {
+  pushUndo();
+  for (const n of items) {
+    if (v) n.style = { ...(n.style || {}), 'font-size': `${v}px` };
+    else if (n.style) { delete n.style['font-size']; if (!Object.keys(n.style).length) delete n.style; }
+  }
+  commit('board', v ? `Text size ${v}` : 'Text size Auto');
+}
+
 function renderCtx() {
   const el = $('#ctx'); if (!el) return;
   const hide = !sel || drag?.moved || drag?.kind === 'connect' || drag?.kind === 'marquee' || editor || markMode;
@@ -2826,6 +2981,7 @@ function renderCtx() {
     html = sw(PALETTE, -1, 'data-color', 'var(--node)') + '<span class="ctx-sep"></span>' +
       (boxesSel > 1 ? al('left', 'Align left') + al('center', 'Align centres') + al('right', 'Align right') + al('top', 'Align top') + al('middle', 'Align middles') + al('bottom', 'Align bottom') +
         (boxesSel > 2 ? al('hspace', 'Space evenly across') + al('vspace', 'Space evenly down') : '') + '<span class="ctx-sep"></span>' : '') +
+      (multiTextNodes().length ? fontPick(sameFs(multiTextNodes())) + '<span class="ctx-sep"></span>' : '') +
       `<button data-frame-it title="Put them in a frame">Frame</button><span class="ctx-count">${selKeys().size}</span>${del}`;
   } else {
     const item = sel.type === 'node' ? state.nodes.get(sel.id) : state.groups.get(sel.id);
@@ -2845,7 +3001,8 @@ function renderCtx() {
       ? `<select data-zone-pick title="What kind of boundary">${[['', 'Plain frame'], ...Object.entries(ZONES).map(([k, z]) => [k, z.name])].map(([v, t]) => `<option value="${v}"${(zoneOf(item) || '') === v ? ' selected' : ''}>${t}</option>`).join('')}</select>`
       : isIcon ? '<button data-swap-icon title="Pick another icon">Change icon</button>'
       : isImage ? '' : `<select data-shape-pick title="Shape">${SHAPE_NAMES.map(([v, t]) => `<option value="${v}"${item.shape === v ? ' selected' : ''}>${t}</option>`).join('')}</select>`;
-    html = swatches + pick +
+    const sized = sel.type === 'node' && SIZED_TEXT(item) ? fontPick(fsOf(item), fsOf(item) ? null : Math.round(b.fs || 14)) : '';
+    html = swatches + pick + sized +
       `<button data-markitem aria-pressed="${!!item.marked}" title="Highlight for your next request">${glyph('mark')}</button>` + del;
   }
   if (html !== ctxKey) { el.innerHTML = html; ctxKey = html; }
@@ -2863,6 +3020,11 @@ function renderCtx() {
 }
 
 function paint(item, p) {
+  const fsz = item.style?.['font-size'];
+  paintColour(item, p);
+  if (fsz) item.style = { ...(item.style || {}), 'font-size': fsz };
+}
+function paintColour(item, p) {
   if (!p.fill) { delete item.style; if (item.cls) delete item.cls; }
   else if (isUi(item)) item.style = { fill: p.stroke };
   else if (item.shape === 'text') item.style = { color: p.stroke };
@@ -2906,7 +3068,15 @@ function ctxClick(e) {
   commit('board', `Changed link ${item.from} → ${item.to}`);
 }
 
+const multiTextNodes = () => [...selKeys()].filter(k => k.startsWith('n:')).map(k => state.nodes.get(splitKey(k)[1])).filter(SIZED_TEXT);
+const sameFs = ns => { const v = fsOf(ns[0]); return ns.every(n => fsOf(n) === v) ? v : null; };
 function ctxChange(e) {
+  const fp = e.target.closest('[data-font-size]');
+  if (fp && sel) {
+    const items = sel.type === 'multi' ? multiTextNodes() : sel.type === 'node' ? [state.nodes.get(sel.id)].filter(SIZED_TEXT) : [];
+    if (items.length) setFontSize(items, +fp.value || null);
+    return;
+  }
   const dv = e.target.closest('[data-device-pick]');
   if (dv && sel?.type === 'group') { const g = state.groups.get(sel.id); pushUndo(); g.dev = dv.value; const p = state.pos.get(g.id); if (p?.w) { delete p.w; delete p.h; } commit('board', `Made ${g.title} a ${DEVICES[dv.value].name.toLowerCase()} screen`); return; }
   const pa = e.target.closest('[data-piece-add]');
@@ -2976,28 +3146,24 @@ async function copyText(text) {
 
 // The banner: the chat's line about what changed, and a warning when part of a link was unreadable.
 let mergeOffer = null;
-function showNote(note, warnings = [], offer = null) {
+// What the assistant said (the line in its link) goes into the chat, with what changed on the board.
+// note '' with nothing else only clears the merge offer.
+function showNote(note, warnings = [], offer = null, stats = '') {
   mergeOffer = offer;
-  const mb = $('#note-merge');
-  mb.hidden = !offer;
-  if (offer) mb.textContent = `${offer.removed} boxes were removed. Keep them and merge instead`;
-  $('#note-text').textContent = note || 'Diagram updated';
-  $('#note-text').title = note || '';
-  const w = $('#note-warn');
-  w.hidden = !warnings.length;
-  w.textContent = warnings.length ? `${warnings.length} ${warnings.length === 1 ? 'line' : 'lines'} couldn't be read. Ask ${ai().short} to send the link again.` : '';
-  $('#note').hidden = !note && !warnings.length && !offer;
+  if (!note && !warnings.length && !offer) { paintChat(); return; }
+  pushChat({ who: 'bot', text: note || 'Updated the board', warn: warnings.length, merge: offer ? offer.removed : 0, stats });
+  if (chatHidden()) toast(`${ai().short}: ${note || 'Updated the board'}`, 4000);
 }
 
 // ---------- the assistant ----------
 
 // Which chat the user works with. It names the buttons and is where Start goes; the rest is the same.
 const AIS = [
-  { id: 'm365', name: 'Microsoft 365 Copilot', short: 'Copilot', url: 'https://m365.cloud.microsoft/chat', color: '#0f6cbd' },
-  { id: 'copilot', name: 'Copilot', short: 'Copilot', url: 'https://copilot.microsoft.com/', color: '#0f6cbd' },
-  { id: 'chatgpt', name: 'ChatGPT', short: 'ChatGPT', url: 'https://chatgpt.com/', color: '#10a37f' },
-  { id: 'claude', name: 'Claude', short: 'Claude', url: 'https://claude.ai/new', color: '#c96442' },
-  { id: 'gemini', name: 'Gemini', short: 'Gemini', url: 'https://gemini.google.com/', color: '#4285f4' },
+  { id: 'm365', name: 'Microsoft 365 Copilot', short: 'Copilot', url: 'https://m365.cloud.microsoft/chat', color: '#0f6cbd', logo: 'copilot' },
+  { id: 'copilot', name: 'Copilot', short: 'Copilot', url: 'https://copilot.microsoft.com/', color: '#0f6cbd', logo: 'copilot' },
+  { id: 'chatgpt', name: 'ChatGPT', short: 'ChatGPT', url: 'https://chatgpt.com/', color: '#10a37f', logo: 'openai' },
+  { id: 'claude', name: 'Claude', short: 'Claude', url: 'https://claude.ai/new', color: '#c96442', logo: 'claude' },
+  { id: 'gemini', name: 'Gemini', short: 'Gemini', url: 'https://gemini.google.com/', color: '#4285f4', logo: 'gemini' },
   { id: 'other', name: 'Another chat', short: 'your chat', url: '', color: '#64748b' },
 ];
 const AI_KEY = 'kiertotie.ai';
@@ -3010,24 +3176,30 @@ function setAi(id) {
   paintAi();
 }
 
+// The assistant's logo on a white tile, as in orim. Logos live in vendor/ai/<name>.svg; without the file
+// (Copilot has none yet: drop Microsoft's official copilot.svg there) the tile shows the first letter.
+const aiMark = (a, cls = '') => `<span class="ai-mark ${cls}" style="--c:${a.color}">${a.logo ? `<img src="vendor/ai/${a.logo}.svg" alt="" onerror="this.remove()">` : ''}<i>${a.logo ? esc(a.short[0].toUpperCase()) : '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 4.5 H16 V13 H9 L5.5 16 V13 H4 Z"/></svg>'}</i></span>`;
+const aiHost = a => { try { return new URL(a.url).host.replace(/^www\./, ''); } catch { return 'any chat'; } };
 function paintAi() {
   const a = ai();
-  $('#ai-badge').innerHTML = `<span class="ai-dot" style="background:${a.color}">${esc(a.short[0].toUpperCase())}</span><span>${esc(a.short)}</span>`;
-  $('#ai-chips').innerHTML = AIS.map(x => `<button type="button" role="radio" class="ai-chip" data-ai="${x.id}" aria-checked="${x.id === a.id}"><span class="ai-dot" style="background:${x.color}">${esc(x.short[0].toUpperCase())}</span>${esc(x.name)}</button>`).join('');
-  $('#ai-menu').innerHTML = AIS.map(x => `<button type="button" role="menuitemradio" data-ai="${x.id}" aria-checked="${x.id === a.id}"><span class="ai-dot" style="background:${x.color}">${esc(x.short[0].toUpperCase())}</span>${esc(x.name)}</button>`).join('');
-  $('#btn-start').textContent = `Start with ${a.short}`;
-  if (a.url) $('#wait-open').href = a.url;
-  $('#wait-open').textContent = `Open ${a.name} ↗`;
-  $('#wait-open').hidden = !a.url;
-  $('#mockup').innerHTML = chatMockup(a);
-  for (const el of doc().querySelectorAll('.ai-name')) el.textContent = a.short;
-  $('.paste-key').textContent = `${key}V`;
+  const picked = (() => { try { return !!localStorage.getItem(AI_KEY); } catch { return false; } })();
+  $('#ai-tiles').innerHTML = AIS.map(x => `<button type="button" role="listitem" class="ai-tile${picked && x.id === a.id ? ' last' : ''}" data-ai="${x.id}">${aiMark(x, 'lg')}<span class="at-t"><b>${esc(x.name)}</b><small>${esc(x.url ? aiHost(x) : 'Paste into any chat')}</small></span>${picked && x.id === a.id ? '<span class="at-badge">Last used</span>' : ''}</button>`).join('') +
+    `<button type="button" role="listitem" class="ai-tile manual" data-manual><span class="ai-mark lg hand">${glyphPath('<path d="M4 16 L5 12 L13.5 3.5 L16.5 6.5 L8 15 Z M11.5 5.5 L14.5 8.5"/>')}</span><span class="at-t"><b>Work by hand</b><small>No chat, just the board</small></span></button>`;
+  $('#pick-back').innerHTML = `<svg class="ic" viewBox="0 0 20 20" aria-hidden="true"><path d="M12 5 L7 10 L12 15"/></svg>${aiMark(a)}<span>${esc(a.name)}</span><small>Change</small>`;
+  $('#ask-h').textContent = `What should ${a.id === 'other' ? 'your chat' : a.short} draw?`;
+  paintDemo(a);
+  $('#ai-menu').innerHTML = AIS.map(x => `<button type="button" role="menuitemradio" data-ai="${x.id}" aria-checked="${x.id === a.id}" class="mi">${aiMark(x)}<span class="mi-t"><b>${esc(x.name)}</b><small>${esc(aiHost(x))}</small></span></button>`).join('');
+  $('#btn-start').innerHTML = `${aiMark(a)}<span>Start with ${esc(a.short)}</span><svg class="ic" viewBox="0 0 20 20" aria-hidden="true"><path d="M4 10 H16 M11 5 L16 10 L11 15"/></svg>`;
+  $('#chat-mark').innerHTML = aiMark(a);
+  $('#chat-name').textContent = a.name;
+  $('#chat-host').textContent = a.url ? aiHost(a) : 'Paste into any chat';
+  const open = $('#chat-open'); open.hidden = !a.url; if (a.url) { open.href = a.url; open.title = `Open ${a.name}`; open.setAttribute('aria-label', `Open ${a.name}`); }
   $('#start-help').textContent = canFloat
-    ? `Floats this board above your windows, copies the instructions${a.url ? ` and opens ${a.name}` : ''}. Paste there (${key}V) and send.`
+    ? `Copies the instructions, floats this board above your windows${a.url ? ` and opens ${a.name}` : ''}. Paste there (${key}V) and send.`
     : `Copies the instructions${a.url ? ` and opens ${a.name}` : ''}. Paste there (${key}V) and send.`;
-  $('#ask').placeholder = `Next request for ${a.short} (optional)`;
-  $('#btn-done').textContent = `Send to ${a.short}`;
-  $('#btn-done').title = `Copy the diagram and your request, then paste it into ${a.short}`;
+  $('#ask').placeholder = chatStarted() ? 'What should change?' : `What should ${a.short} draw?`;
+  $('#btn-done').title = `Copy for ${a.short} (Enter)`;
+  paintChat();
 }
 
 // ---------- chat mockups ----------
@@ -3116,6 +3288,8 @@ In the link: ; between lines, + for each space, and percent-encode only these: [
 [Open in Kiertotie](${exampleLink()})`;
 
 function starterText(request = '', pics = [], inImage = false) {
+  const has = [...state.nodes.values()].some(n => n.shape !== 'image') || state.groups.size;
+  if (has && !request.includes('```')) request = `${request || 'Let us continue from my board.'}\n\nMy board so far:\n\`\`\`mermaid\n${toMermaid()}\n\`\`\``;
   // Written into a picture, the request comes first, right under the heading, so it is read first.
   if (inImage) return `My first request: ${request || '(see the picture)'}\n${pictureLine(pics, true)}\n\n${starterText('', [], false).replace(/\n\nMy first request: $/, '')}`;
   return `You are my diagram assistant. I draw on the Kiertotie board at ${BASE}
@@ -3180,7 +3354,8 @@ async function readHash() {
   }
   if (!pipWin && await handOff(link)) return;
   const r = applyText(link.text, 'link');
-  showNote(link.note, r.warnings || [], r.mergeOffer);
+  showHome(false);
+  showNote(link.note, r.warnings || [], r.mergeOffer, r.message);
   updateEmpty();
 }
 
@@ -3308,19 +3483,8 @@ async function copyPacket(build, pics) {
   showSentBar();
   return { ok, pics: lastSent ? pics.length : 0, oneImage: !!lastSent?.oneImage };
 }
-function showSentBar() {
-  const bar = $('#sent-bar');
-  bar.hidden = !lastSent;
-  if (!lastSent) return;
-  const pic = lastSent.n === 1 ? 'the picture' : `the ${lastSent.n} pictures (one image)`, who = esc(ai().short);
-  $('#sent-text').innerHTML = lastSent.oneImage
-    ? `Copied one picture with your message written under it. Paste it in ${who} and send. If ${who} can't read it, send it in two pastes:`
-    : `<b>1</b> Paste the text in ${who}. <b>2</b> Then copy ${pic} and paste it too:`;
-  $('#sent-copytext').textContent = lastSent.oneImage ? 'Copy text' : 'copy the text again';
-  $('#sent-copytext').className = lastSent.oneImage ? '' : 'link';
-  // In the two-paste way the text comes first, so its button does too.
-  if (lastSent.oneImage) bar.insertBefore($('#sent-copytext'), $('#sent-pic')); else bar.insertBefore($('#sent-pic'), $('#sent-copytext'));
-}
+// The pasting steps show in the chat (sysText), so there is nothing else to paint.
+function showSentBar() {}
 async function copyLastPicture() {
   if (!lastSent) return;
   const w = pipWin || window, png = plainPicture(lastSent.pics);
@@ -3328,7 +3492,6 @@ async function copyLastPicture() {
   try {
     await w.navigator.clipboard.write([new w.ClipboardItem({ 'image/png': png })]);
     toast(`Picture copied. Press ${key}V in ${ai().short}, then send.`, 4000);
-    $('#sent-bar').hidden = true;
   } catch { toast('The browser did not copy the picture. Drag it from the board into the chat instead.', 5000); }
 }
 async function copyLastText() { if (lastSent && await copyText(lastSent.text)) toast(`Text copied. Press ${key}V in ${ai().short}, then Copy picture.`); }
@@ -3337,12 +3500,12 @@ function paintPicChips() {
   const label = ps => ps.length ? `🖼 ${ps.length} ${ps.length === 1 ? 'picture goes' : 'pictures go'} along` : '';
   const pics = picturesToSend(), t0 = label(pics);
   pics.forEach(decodedImage);
-  const chip = $('#pic-chip'); if (chip) { chip.hidden = !pics.length; chip.textContent = t0; }
+  paintChips(pics);
   const startPics = picturesToSend({ all: true }), t = label(startPics);
   startPics.forEach(decodedImage);
-  // The start card hides the board, so it shows the pictures themselves, with a way to take them off again.
+  // Home hides the board, so it shows the pictures themselves, with a way to take them off again.
   const sp = $('#start-pics');
-  if (sp) {
+  if (sp && homeOpen) {
     sp.hidden = !startPics.length;
     sp.innerHTML = startPics.length ? startPics.slice(0, 4).map(n => `<img src="${esc(n.src)}" alt="">`).join('') +
       `<span>${esc(t.replace('🖼 ', ''))}</span><button type="button" class="link" data-unpic>remove</button>` : '';
@@ -3350,16 +3513,14 @@ function paintPicChips() {
 }
 
 async function done() {
+  if (!chatStarted()) return startLoop($('#ask').value.trim());
   const request = $('#ask').value.trim(), pics = picturesToSend();
   const r = await copyPacket(m => donePacket(request, pics, m), pics);
-  if (!r.ok) { toast('Copying failed: open More → Show source and copy the text by hand', 5000); return; }
-  $('#ask').value = '';
-  const where = ai().short;
-  if (r.pics) { toast(r.oneImage ? `Copied as one picture. Press ${key}V in ${where} and send.` : `Text copied. Press ${key}V in ${where}, then Copy picture.`, 4000); return; }
-  if (pipWin) { toast(`Copied. Press ${key}V in ${where}${request ? ' and send' : ' and add your request'}.`, 4000); return; }
-  window.close();
-  // Still here: the browser does not let this tab close itself (it was not opened from a link).
-  setTimeout(() => toast(`Copied. Go to ${where}, press ${key}V${request ? ' and send' : ' and add your request'}.`, 5000), 250);
+  if (!r.ok) { toast('Copying failed: open Import → Edit the Mermaid source and copy the text by hand', 5000); return; }
+  $('#ask').value = ''; $('#ask').style.height = '';
+  pushChat({ who: 'me', text: request || 'Here is my board as it is now.', pics: r.pics, marked: markedItems().length });
+  pushChat({ who: 'sys', kind: r.pics ? (r.oneImage ? 'one' : 'two') : 'copied' });
+  if (!pipWin && !pics.length && openedByLink) { window.close(); }
 }
 
 // Other board tabs follow along: whatever one tab saves, the others load.
@@ -3407,7 +3568,7 @@ async function floatBoard(opts = {}) {
   for (const [type, fn] of docListeners) w.document.addEventListener(type, fn);
   w.addEventListener('resize', () => render());
   w.addEventListener('pagehide', dockBoard, { once: true });
-  updateFloatUI(); render(); fit();
+  updateFloatUI(); render(); fit(); scrollChat();
   // The floating window gets its final size a moment after it opens: fit again once it has.
   w.requestAnimationFrame(() => fit()); setTimeout(fit, 150); setTimeout(fit, 500);
   log('board', 'Board is floating');
@@ -3419,8 +3580,10 @@ function dockBoard() {
   for (const el of [...w.document.body.children]) document.body.insertBefore(el, anchor);
   pipWin = null;
   anchor.hidden = true;
-  updateFloatUI(); render(); fit(); setTimeout(fit, 150);
+  updateFloatUI(); render(); fit(); setTimeout(fit, 150); scrollChat();
 }
+// Moving the chat to another window resets its scroll: back to the newest message.
+function scrollChat() { const go = () => { const l = $('#chat-log'); if (l) l.scrollTop = l.scrollHeight; }; go(); requestAnimationFrame(go); setTimeout(go, 200); }
 
 function updateFloatUI() {
   $('#btn-float').hidden = !canFloat || !!pipWin;
@@ -3435,7 +3598,7 @@ if (bc) bc.addEventListener('message', ({ data }) => {
   if (!data || !pipWin) return;
   if (data.type === 'floating?') bc.postMessage({ type: 'floating', to: data.from });
   if (data.type === 'apply') {
-    const r = applyText(data.text, 'link'); showNote(data.note || '', r.warnings || [], r.mergeOffer); updateEmpty();
+    const r = applyText(data.text, 'link'); showHome(false); showNote(data.note || '', r.warnings || [], r.mergeOffer, r.message); updateEmpty();
     bc.postMessage({ type: 'applied', to: data.from });
   }
 });
@@ -3506,7 +3669,7 @@ function exportSvg() {
   const a = [src, ...src.querySelectorAll('*')], b = [copy, ...copy.querySelectorAll('*')];
   const inline = (from, to) => from.forEach((el, i) => { const cs = getComputedStyle(el); to[i].setAttribute('style', props.map(p => `${p}:${cs.getPropertyValue(p)}`).join(';')); to[i].removeAttribute('class'); });
   // Comments are notes for the people working on the board, so exports leave them out.
-  const hits = b.filter((_, i) => ['hit', 'port', 'handle', 'ghost', 'comment', 'sel-box', 'marquee'].some(c => a[i].classList?.contains(c)));
+  const hits = b.filter((_, i) => ['hit', 'port', 'handle', 'ghost', 'comment', 'sel-box', 'marquee', 'frame-grip', 'group-bar'].some(c => a[i].classList?.contains(c)));
   inline(a, b); hits.forEach(el => el.remove());
   const bg = getComputedStyle($('#board')).getPropertyValue('--bg').trim() || '#ffffff';
   const defs = $('#board defs'), defsCopy = defs.cloneNode(true);
@@ -3556,6 +3719,7 @@ function exportDrawio() {
     if (c.fill && n.shape !== 'icon') style += `fillColor=${c.fill};`;
     if (c.stroke) style += `strokeColor=${c.stroke};`;
     if (c.color) style += `fontColor=${c.color};`;
+    if (b.fs && SIZED_TEXT(n)) style += `fontSize=${b.fs};`;
     cells.push(`<mxCell id="${cid(id)}" value="${xmlEsc(value)}" style="${style}whiteSpace=wrap;html=1;" vertex="1" parent="${o.parent}">${geo(b, o)}</mxCell>`);
   }
   state.edges.forEach((e, i) => {
@@ -3658,18 +3822,12 @@ function downloadPng() {
 
 function setMarkMode(on) {
   markMode = on;
-  $('#btn-mark').setAttribute('aria-pressed', String(on));
+  $('#rail-mark').setAttribute('aria-pressed', String(on));
   svg.classList.toggle('marking', on);
   if (on) toast('Click boxes or group titles to highlight them. Esc to stop.');
 }
 
 function updateEmpty() {
-  const empty = state.nodes.size === 0 && state.groups.size === 0;
-  // Only pictures on the board: the start card stays, so the first paste still carries the instructions.
-  const onlyPics = !empty && !state.groups.size && [...state.nodes.values()].every(n => n.shape === 'image');
-  $('#start').hidden = !(empty || onlyPics) || started;
-  $('#waiting').hidden = !(empty || onlyPics) || !started;
-  $('#composer').hidden = empty || onlyPics;
   paintPicChips();
 }
 
@@ -3679,14 +3837,243 @@ async function copyStarter() {
   return ok;
 }
 
+// ---------- home ----------
+
+// Home lists every board and starts new ones. It opens on an empty board, and from the home button.
+let homeOpen = false, landingOff = false;
+const IDEAS = [
+  ['Azure web app', 'An Azure web app with Front Door, App Service, Key Vault and SQL, in a resource group'],
+  ['Login screens', 'A mobile sign-in and sign-up flow as phone screens'],
+  ['Backlog', 'An epic for a website lead form, with features, stories and a bug as tickets'],
+  ['Replicate a picture', 'Replicate the picture I pasted as an editable diagram'],
+];
+// Home has two steps on the left: pick the chat, then say what to draw. The demo on the right shows the loop.
+let homeStep = 'pick', shelf = null, shelfPicked = false;
+function setHomeStep(st) {
+  homeStep = st;
+  $('#pick').hidden = st !== 'pick'; $('#ask-step').hidden = st !== 'ask';
+  if (st === 'ask') setTimeout(() => { if (homeOpen) $('#first').focus(); }, 30);
+}
+function showHome(on) {
+  if (on === homeOpen && !on) return;
+  homeOpen = on;
+  $('#home').hidden = !on; $('#app').hidden = on;
+  if (on) { closeMore(); closePops(); setHomeStep(picturesToSend({ all: true }).length ? 'ask' : 'pick'); paintHome(); }
+  else { render(); }
+}
+const homeBoards = () => boardList().filter(b => b.boxes > 0 || b.id === boardId).sort((a, b) => b.updated - a.updated);
+function paintHome() {
+  $('#land-ideas').innerHTML = IDEAS.map(([t, q]) => `<button type="button" class="idea" data-idea="${esc(q)}">${esc(t)}</button>`).join('');
+  paintAi(); paintPicChips(); paintShelf();
+}
+// The shelf under the hero: your boards, or templates. Boards first once there is one worth showing.
+function paintShelf() {
+  const boards = homeBoards();
+  if (!shelfPicked) shelf = boards.some(b => b.boxes > 0) ? 'boards' : 'templates';
+  for (const b of $('#shelf-seg').querySelectorAll('[data-shelf]')) b.setAttribute('aria-pressed', String(b.dataset.shelf === shelf));
+  $('#shelf-seg [data-shelf="boards"]').textContent = `Your boards${boards.length ? ` · ${boards.length}` : ''}`;
+  $('#start-template').hidden = shelf !== 'templates';
+  $('#shelf-cards').innerHTML = shelf === 'templates' ? TEMPLATES.slice(0, 6).map(tplCard).join('')
+    : boards.map(b => `<div class="board-card${b.id === boardId ? ' current' : ''}" data-board="${b.id}">
+    <button type="button" class="tpd-card" data-open="${b.id}"><span class="tpd-thumb" data-thumb="${b.id}"></span><b>${esc(b.name)}</b><small>${b.boxes ? `${b.boxes} boxes · ` : ''}${ago(b.updated)}</small></button>
+    <span class="bc-acts"><button type="button" data-bact="rename" title="Rename">${glyphPath('<path d="M4 16 L5 12 L13.5 3.5 L16.5 6.5 L8 15 Z"/>')}</button><button type="button" data-bact="copy" title="Duplicate">${glyphPath('<path d="M7 3 H15 V14 H7 Z M5 6 V17 H13"/>')}</button><button type="button" data-bact="delete" title="Delete">${glyphPath('<path d="M3.5 5.5 H16.5 M8 5.5 V3.5 H12 V5.5 M5.5 5.5 L6.3 16.5 H13.7 L14.5 5.5"/>')}</button></span></div>`).join('');
+  // After home is on screen, so it opens at once.
+  setTimeout(() => { if (homeOpen) fillThumbs($('#home')); }, 60);
+}
+const glyphPath = d => `<svg class="ic" viewBox="0 0 20 20" aria-hidden="true">${d}</svg>`;
+
+// The demo: you describe it, paste it in your chat, click the link, and the board fills. One 9 second loop in CSS;
+// data-at is when a piece appears, as a percentage of the loop.
+function paintDemo(a) {
+  const el = $('#demo'); if (!el) return;
+  if (el.dataset.ready) { for (const m of el.querySelectorAll('.dm-ai')) m.innerHTML = aiMark(a); for (const n of el.querySelectorAll('.dm-ai-name')) n.textContent = a.id === 'other' ? 'Your chat' : a.short; return; }
+  el.dataset.ready = '1';
+  const box = (x, y, w, h, t, at, cls = '') => `<g class="dm-in${cls}" data-at="${at}"><rect x="${x}" y="${y}" width="${w}" height="${h}" rx="7"/><text x="${x + w / 2}" y="${y + h / 2 + 4}">${t}</text></g>`;
+  const line = (d, at) => `<path class="dm-draw" data-at="${at}" pathLength="1" d="${d}"/>`;
+  el.innerHTML = `<div class="dm-in-wrap">
+    <span class="dm-tag">How it works</span>
+    <div class="dm-card dm-a">
+      <div class="dm-head"><svg class="mark" viewBox="0 0 24 24"><rect x="2" y="2" width="20" height="20" rx="6" fill="#ffd23f"/><path d="M8 9.5 A4.5 4.5 0 0 1 16 8 M16 8 V5 M16 8 H13 M16 14.5 A4.5 4.5 0 0 1 8 16 M8 16 V19 M8 16 H11" fill="none" stroke="#1a1a1a" stroke-width="1.9" stroke-linecap="round"/></svg>Kiertotie</div>
+      <div class="dm-prompt"><span class="dm-type">Expense approval flow</span></div>
+      <div class="dm-btn"><span class="dm-ai"></span><span>Start with <span class="dm-ai-name"></span></span></div>
+    </div>
+    <div class="dm-card dm-b">
+      <div class="dm-head"><span class="dm-ai"></span><span class="dm-ai-name"></span></div>
+      <div class="dm-bubble dm-in" data-at="30"><i></i><i></i><i class="s"></i></div>
+      <div class="dm-reply"><i class="dm-in" data-at="38"></i><i class="dm-in s" data-at="41"></i></div>
+      <div class="dm-link dm-in" data-at="45">Open in Kiertotie ↗</div>
+    </div>
+    <div class="dm-card dm-c"><svg viewBox="0 0 400 104">
+      ${line('M88 52 H118', 62)}${line('M196 52 H226', 66)}${line('M304 52 H322', 70)}
+      ${box(14, 34, 74, 36, 'Submit', 58)}${box(118, 30, 78, 44, 'Over 500?', 62, ' dia')}${box(226, 34, 78, 36, 'Manager', 66)}${box(322, 34, 64, 36, 'Pay', 70, ' end')}
+    </svg></div>
+    <svg class="dm-arrows" viewBox="0 0 100 90" preserveAspectRatio="none">
+      <path class="dm-in flat" data-at="26" d="M41 25 C46 14 50 13 54.5 17"/><path class="dm-in flat" data-at="26" d="M52.4 15.2 L54.8 17.3 L51.8 18.4"/>
+      <path class="dm-in flat" data-at="52" d="M70 49 C68 54 63 53 60 55.5"/><path class="dm-in flat" data-at="52" d="M62.6 56.2 L59.8 55.8 L60.6 53.1"/>
+    </svg>
+    <span class="dm-cursor"><svg viewBox="0 0 20 20"><path d="M4 2.5 L4 16 L7.6 12.6 L10 18 L12.4 17 L10.1 11.7 L15 11.4 Z"/></svg></span>
+    <ol class="dm-steps"><li>Describe it</li><li>Paste it in <span class="dm-ai-name"></span></li><li>Click the link</li></ol>
+  </div>`;
+  // One keyframe rule per moment something appears.
+  const ats = new Set([...el.querySelectorAll('[data-at]')].map(n => +n.dataset.at));
+  let css = '';
+  for (const t of ats) {
+    css += `@keyframes dm-in-${t} { 0%, ${t}% { opacity: 0; transform: translateY(5px) } ${t + 4}%, 92% { opacity: 1; transform: none } 97%, 100% { opacity: 0 } }
+      @keyframes dm-fade-${t} { 0%, ${t}% { opacity: 0 } ${t + 3}%, 92% { opacity: 1 } 97%, 100% { opacity: 0 } }
+      @keyframes dm-draw-${t} { 0%, ${t}% { stroke-dashoffset: 1 } ${t + 5}%, 92% { stroke-dashoffset: 0; opacity: 1 } 97%, 100% { opacity: 0 } }\n`;
+  }
+  let st = document.getElementById('dm-keys');
+  if (!st) { st = Object.assign(document.createElement('style'), { id: 'dm-keys' }); document.head.append(st); }
+  st.textContent = css;
+  for (const n of el.querySelectorAll('[data-at]')) n.style.animationName = `${n.classList.contains('dm-draw') ? 'dm-draw' : n.classList.contains('flat') ? 'dm-fade' : 'dm-in'}-${n.dataset.at}`;
+  paintDemo(a);
+  placeDemoCursor();
+}
+// The cursor clicks Start, then the link: their places, measured, for the cursor's keyframes.
+function placeDemoCursor() {
+  const el = $('#demo'), b = el?.querySelector('.dm-btn'), l = el?.querySelector('.dm-link');
+  if (!b || !el.offsetWidth) return;
+  const r = el.getBoundingClientRect(), at = (n, k) => { const q = n.getBoundingClientRect(); el.style.setProperty(`--${k}x`, `${((q.left + q.width * 0.55 - r.left) / r.width * 100).toFixed(1)}%`); el.style.setProperty(`--${k}y`, `${((q.top + q.height * 0.5 - r.top) / r.height * 100).toFixed(1)}%`); };
+  // The link is hidden at first, but it has its size and place.
+  at(b, 'b'); at(l, 'l');
+}
+window.addEventListener('resize', () => { if (homeOpen) placeDemoCursor(); });
+
+function workByHand() { if (thread().length || state.nodes.size) createBoard(); showHome(false); toast('Use the tools on the left, or paste a diagram'); }
+$('#home').addEventListener('click', e => {
+  const idea = e.target.closest('[data-idea]'), t = e.target.closest('[data-tpl]'), o = e.target.closest('[data-open]'), act = e.target.closest('[data-bact]');
+  const tile = e.target.closest('.ai-tile'), sh = e.target.closest('[data-shelf]');
+  if (tile) { if (tile.hasAttribute('data-manual')) workByHand(); else { setAi(tile.dataset.ai); setHomeStep('ask'); } return; }
+  if (e.target.closest('#pick-back')) { setHomeStep('pick'); return; }
+  if (e.target.closest('#first-attach')) { $('#home-file').click(); return; }
+  if (sh) { shelf = sh.dataset.shelf; shelfPicked = true; paintShelf(); return; }
+  if (idea) { $('#first').value = idea.dataset.idea; $('#first').focus(); }
+  if (t) { useTemplate(t.dataset.tpl); showHome(false); }
+  if (o) { if (o.dataset.open !== boardId) openBoard(o.dataset.open); showHome(false); }
+  if (act) {
+    const id = act.closest('[data-board]').dataset.board, w = pipWin || window, name = boardList().find(x => x.id === id)?.name || '';
+    if (act.dataset.bact === 'rename') { const n = w.prompt('Name this board', name); if (n && n.trim()) renameBoard(id, n.trim()); }
+    if (act.dataset.bact === 'copy') { duplicateBoard(id); }
+    if (act.dataset.bact === 'delete' && w.confirm(`Delete "${name}"? This can't be undone.`)) { thumbCache.clear(); store.del(`kiertotie.chat.${id}`); deleteBoard(id); }
+    paintShelf();
+  }
+});
+// Hovering a chat shows it in the demo.
+$('#ai-tiles').addEventListener('pointerover', e => { const t = e.target.closest('[data-ai]'); if (t) paintDemo(AIS.find(x => x.id === t.dataset.ai)); });
+$('#ai-tiles').addEventListener('pointerleave', () => paintDemo(ai()));
+// A picture from the home screen: like pasting one, it starts a fresh board unless this one is still empty.
+function homePicture(file) {
+  if ([...state.nodes.values()].some(n => n.shape !== 'image')) createBoard();
+  addImage(file, viewCentre()); setHomeStep('ask');
+}
+$('#home-file').addEventListener('change', e => { for (const f of e.target.files) if (f.type.startsWith('image/')) homePicture(f); e.target.value = ''; });
+$('#home-import').addEventListener('click', () => pickFiles());
+$('#home-btn').addEventListener('click', () => showHome(true));
+$('#home-theme').addEventListener('click', () => $('#btn-theme').click());
+
+// ---------- chat ----------
+
+// The chat panel keeps this board's conversation: what you sent, what the assistant said it changed, and the
+// steps for pasting. It lives in this browser, one list per board.
+const chatKey = (id = boardId) => `kiertotie.chat.${id}`;
+function thread() { try { return JSON.parse(store.get(chatKey())) || []; } catch { return []; } }
+function pushChat(m) { const t = thread(); t.push({ t: Date.now(), ...m }); store.set(chatKey(), JSON.stringify(t.slice(-80))); paintChat(); }
+const chatStarted = () => started || thread().some(m => m.kind === 'start' || m.who === 'bot');
+const chatHidden = () => document.body.classList.contains('no-chat') && !pipWin;
+const SUGGEST = [
+  ['<path d="M10 3 V17 M3 10 H17"/>', 'Expand this board', 'Add what is missing to this board, and tidy what is there.'],
+  ['<rect x="3.5" y="3.5" width="13" height="13" rx="2"/><path d="M6.5 7.5 H13.5 M6.5 10.5 H13.5 M6.5 13.5 H10.5"/>', 'Plan it out with tickets', 'Plan this out as backlog tickets: an epic, features and stories with points.'],
+  ['<rect x="6" y="2.5" width="8" height="15" rx="2"/>', 'Mock up the screens', 'Mock up the screens for this as phone screens, linked in order.'],
+  ['<path d="M4 4 H16 V12 L12 16 H4 Z M16 12 H12 V16"/>', 'Explain this board', 'Explain this board in a few sticky notes next to the parts they are about.'],
+  ['<rect x="3" y="4" width="14" height="12" rx="1.5"/><path d="M3 13 L7.5 9 L11 12 L13 10.5 L17 14"/>', 'Replicate a picture', 'Replicate the picture I pasted as an editable diagram.'],
+];
+function paintChat() {
+  const log = $('#chat-log'); if (!log) return;
+  const t = thread(), a = ai(), lastSys = t.map(m => m.who).lastIndexOf('sys'), lastBot = t.map(m => m.who).lastIndexOf('bot');
+  if (!t.length) {
+    log.innerHTML = `<div class="chat-empty">${aiMark(a, 'big')}<b>${state.nodes.size ? 'What should we do with this board?' : `What should ${esc(a.short)} draw?`}</b>
+      <p>Write it below and press Enter. Kiertotie copies it with the instructions; you paste it into ${esc(a.name)}, and its answer opens here as a link.</p>
+      <div class="chat-try">${SUGGEST.map(([ic, tt, q]) => `<button type="button" data-suggest="${esc(q)}"><span class="ct-ic">${glyphPath(ic)}</span>${esc(tt)}</button>`).join('')}</div></div>`;
+  } else {
+    log.innerHTML = t.map((m, i) => {
+      if (m.who === 'me') return `<div class="msg me">${esc(m.text)}${m.pics ? `<span class="msg-tag">🖼 ${m.pics} ${m.pics === 1 ? 'picture' : 'pictures'}</span>` : ''}${m.marked ? `<span class="msg-tag">${m.marked} highlighted</span>` : ''}</div>`;
+      if (m.who === 'bot') return `<div class="msg bot">${aiMark(a)}<div class="msg-body"><div>${esc(m.text)}</div>${m.stats ? `<div class="msg-stats">${esc(m.stats.replace(/^(Replaced diagram|Merged lines): /, ''))}</div>` : ''}${m.warn ? `<div class="msg-warn">${m.warn} ${m.warn === 1 ? 'line' : 'lines'} couldn't be read. Ask ${esc(a.short)} to send the link again.</div>` : ''}${i === lastBot && m.merge && mergeOffer ? `<button type="button" class="msg-btn primary" data-merge>${m.merge} boxes were removed. Keep them and merge instead</button>` : ''}${i === lastBot && undoStack.length ? '<button type="button" class="msg-link" data-undo>Undo</button>' : ''}</div></div>`;
+      if (m.who === 'sys') return `<div class="msg sys">${sysText(m, i === lastSys)}</div>`;
+      return '';
+    }).join('');
+  }
+  log.scrollTop = log.scrollHeight;
+  $('#ask').placeholder = chatStarted() ? 'What should change?' : `What should ${a.short} draw?`;
+}
+// The pasting steps: the newest one has the buttons.
+function sysText(m, live) {
+  const a = ai(), k = `${key}V`;
+  if (m.kind === 'start') return `<b>Instructions copied for ${esc(a.short)}.</b><ol class="steps"><li>${a.url ? `<a href="${esc(a.url)}" target="kiertotie-chat" rel="noopener" class="msg-btn primary">Open ${esc(a.name)} ↗</a>` : `Open your chat.`}</li><li>Paste (${k}) and send${m.one ? ': it goes as one picture with your message written under it' : m.pics ? ', then Copy picture below and paste it too' : ''}.</li><li>When it answers, click <b>Open in Kiertotie</b>. The board updates here.</li></ol>${live && m.pics && !m.one && lastSent ? '<button type="button" class="msg-btn" data-copy-pic>Copy picture</button>' : ''}`;
+  if (m.kind === 'failed') return `<b>Copying failed.</b> Use Copy the instructions again in the menu above.`;
+  if (m.kind === 'one') return `<b>Copied as one picture</b>, with your message written under it. Paste it in ${esc(a.short)} (${k}) and send.${live && lastSent ? ' <span class="msg-alt">If it can\'t read it: <button type="button" class="msg-link" data-copy-text>copy the text</button> and <button type="button" class="msg-link" data-copy-pic>the picture</button></span>' : ''}`;
+  if (m.kind === 'two') return `<b>Text copied.</b> Paste it in ${esc(a.short)} (${k}), then${live && lastSent ? ' <button type="button" class="msg-btn primary" data-copy-pic>Copy picture</button>' : ' copy the picture'} and paste it too.`;
+  if (m.kind === 'merged') return 'Kept the board and merged the changes into it.';
+  return `<b>Copied.</b> Paste it in ${esc(a.short)} (${k}) and send.`;
+}
+// What goes with the next message: highlighted boxes and pictures.
+function paintChips(pics = picturesToSend()) {
+  const el = $('#chat-chips'); if (!el) return;
+  const marked = markedItems();
+  const parts = [];
+  if (marked.length) parts.push(`<span class="chip mark">About: ${esc(marked.slice(0, 3).map(x => (x.label || x.title || x.id).replace(/\n/g, ' ')).join(', '))}${marked.length > 3 ? ` +${marked.length - 3}` : ''}<button type="button" data-unmark title="Clear the highlights" aria-label="Clear the highlights">×</button></span>`);
+  if (pics.length) parts.push(`<span class="chip pic">${pics.slice(0, 3).map(n => `<img src="${esc(n.src)}" alt="">`).join('')}${pics.length} ${pics.length === 1 ? 'picture' : 'pictures'}</span>`);
+  el.innerHTML = parts.join(''); el.hidden = !parts.length;
+}
+$('#chat-log').addEventListener('click', e => {
+  const sg = e.target.closest('[data-suggest]');
+  if (sg) { $('#ask').value = sg.dataset.suggest; $('#ask').focus(); return; }
+  if (e.target.closest('[data-copy-pic]')) copyLastPicture();
+  if (e.target.closest('[data-copy-text]')) copyLastText();
+  if (e.target.closest('[data-undo]')) undo();
+  if (e.target.closest('[data-merge]')) {
+    const o = mergeOffer; if (!o) return;
+    undo();
+    const r = applyText(o.src, 'link');
+    mergeOffer = null;
+    pushChat({ who: 'sys', kind: 'merged', warn: (r.warnings || []).length });
+  }
+});
+$('#chat-chips').addEventListener('click', e => {
+  if (!e.target.closest('[data-unmark]')) return;
+  pushUndo(); for (const x of markedItems()) x.marked = false; commit('board', 'Cleared the highlights'); paintChips();
+});
+$('#chat-form').addEventListener('submit', e => { e.preventDefault(); done(); });
+$('#chat-attach').addEventListener('click', () => $('#chat-file').click());
+$('#chat-file').addEventListener('change', e => { for (const f of e.target.files) if (f.type.startsWith('image/')) addImage(f, viewCentre()); e.target.value = ''; });
+// Chat beside the board, or the board alone.
+const VIEW_KEY = 'kiertotie.view';
+function setView(v) {
+  document.body.classList.toggle('no-chat', v === 'canvas');
+  for (const b of doc().querySelectorAll('#view-seg [data-view]')) b.setAttribute('aria-pressed', String(b.dataset.view === v));
+  store.set(VIEW_KEY, v);
+  requestAnimationFrame(() => render());
+}
+$('#view-seg').addEventListener('click', e => { const b = e.target.closest('[data-view]'); if (b) setView(b.dataset.view); });
+// Rename by typing in the board name.
+$('#title').addEventListener('keydown', e => {
+  if (e.key === 'Enter') { e.preventDefault(); e.target.blur(); }
+  if (e.key === 'Escape') { e.target.value = currentBoard().name; e.target.blur(); }
+});
+$('#title').addEventListener('change', e => { const n = e.target.value.trim(); if (n && n !== currentBoard().name) renameBoard(boardId, n); else e.target.value = currentBoard().name; });
+
 // Start: copy the instructions and float the board. The waiting card then shows how to finish in the chat.
 let started = false;
-function startLoop() {
+function startLoop(fromChat = null) {
+  const req = fromChat ?? $('#first').value.trim();
+  // From home, a board that already holds a diagram stays as it is: the chat starts on a new board.
+  if (fromChat === null && (thread().length || [...state.nodes.values()].some(n => n.shape !== 'image'))) createBoard();
+  showHome(false);
+  // A board still called by its default name takes its name from the request.
+  if (req && /^(Untitled board|My board)$/.test(currentBoard().name)) renameBoard(boardId, req.replace(/\s+/g, ' ').slice(0, 48).replace(/\s\S*$/, s => req.length > 48 ? '…' : s));
   const pics = picturesToSend({ all: true });
-  const first = $('#first').value.trim();
   let one = false;
-  const copying = copyPacket(m => starterText(first, pics, m), pics).then(r => { one = r.oneImage; return r.ok; });
-  // Floating uses up the click, so the chat opens from its own button on the waiting card.
+  const copying = copyPacket(m => starterText(req, pics, m), pics).then(r => { one = r.oneImage; return r.ok; });
+  // Floating uses up the click, so the chat opens from its own button in the chat panel.
   // Without a float the click is still free, and the chat opens straight away.
   const go = () => {
     const f = canFloat && !pipWin ? floatBoard() : null;
@@ -3696,9 +4083,13 @@ function startLoop() {
   // With a picture, the copy finishes first: the floating window takes the focus, and Chrome cancels a copy
   // that is still going. The click stays usable for a few seconds, which is plenty.
   const floating = pics.length ? Promise.race([copying, new Promise(r => setTimeout(r, 1500))]).then(go) : go();
-  started = true; updateEmpty();
-  copying.then(ok => toast(!ok ? 'Copying failed: use Copy the instructions again.' : pics.length ? (one ? `Copied as one picture. In ${ai().short}, press ${key}V and send.` : `Instructions copied. In ${ai().short}, press ${key}V, then Copy picture.`)
-    : `Instructions copied. In ${ai().short}, press ${key}V and send.`, 6000));
+  started = true;
+  $('#first').value = ''; $('#ask').value = '';
+  pushChat({ who: 'me', kind: 'start', text: req || 'Draw with me on this board.', pics: pics.length });
+  copying.then(ok => {
+    pushChat({ who: 'sys', kind: ok ? 'start' : 'failed', one, pics: pics.length });
+    toast(!ok ? 'Copying failed: use Copy the instructions again.' : `Instructions copied. In ${ai().short}, press ${key}V and send.`, 5000);
+  });
   return floating;
 }
 
@@ -3712,9 +4103,10 @@ function tidy() {
 
 function closeMore(except = null) { for (const d of doc().querySelectorAll('details.more')) if (d !== except) d.open = false; }
 
-$('#btn-mark').addEventListener('click', () => setMarkMode(!markMode));
 $('#rail').addEventListener('click', e => {
   const b = e.target.closest('button'); if (!b) return;
+  if (b.hasAttribute('data-mark')) { closePops(); setMarkMode(!markMode); return; }
+  if (b.hasAttribute('data-act-tpl')) { closePops(); openTemplates(); return; }
   if (b.dataset.pop) { openPop(b.dataset.pop); return; }
   setTool(tool === b.dataset.tool ? 'select' : b.dataset.tool);
   if (tool !== 'select') toast('Click the board to place it');
@@ -3731,15 +4123,23 @@ $('#icon-q').addEventListener('keydown', e => {
   if (e.key === 'Enter') { const b = $('#icon-grid [data-icon]'); if (b) pickIcon(b.dataset.icon); }
 });
 $('#ctx').addEventListener('click', ctxClick);
-$('#template-list').addEventListener('click', e => { const b = e.target.closest('[data-tpl]'); if (b) useTemplate(b.dataset.tpl); });
-$('#start-template').addEventListener('click', () => openPop('template'));
+$('#tpd-grid').addEventListener('click', e => { const b = e.target.closest('[data-tpl]'); if (b) useTemplate(b.dataset.tpl); });
+$('#tpd-side').addEventListener('click', e => { const b = e.target.closest('[data-tcat]'); if (b) { tplCat = b.dataset.tcat; $('#tpd-q').value = ''; paintTplDialog(); } });
+$('#tpd-q').addEventListener('input', () => { tplCat = 'All'; paintTplDialog(); });
+$('#tpd-close').addEventListener('click', () => $('#tpl-dialog').close());
+$('#tpl-dialog').addEventListener('click', e => { if (e.target === $('#tpl-dialog')) $('#tpl-dialog').close(); });
+$('#start-template')?.addEventListener('click', () => openTemplates());
 $('#style-picks').addEventListener('click', e => { const b = e.target.closest('[data-bstyle]'); if (b) { e.stopPropagation(); setBoardStyle(b.dataset.bstyle); } });
-$('#board-name').addEventListener('click', openBoards);
+// The board name's menu and the Send button's assistant menu use the same actions as the top bar.
+for (const id of ['#m-ai']) $(id).addEventListener('click', e => {
+  const pick = e.target.closest('[data-ai]'); if (pick) { setAi(pick.dataset.ai); closeMore(); toast(`Sends to ${ai().name} now`); return; }
+  const act = e.target.closest('[data-act]')?.dataset.act;
+  if (act) { closeMore(); runAct(act); }
+});
 $('#m-style').addEventListener('toggle', () => { if ($('#m-style').open) { paintStyles(); paintToggles(); } });
 // One menu open at a time.
 for (const d of doc().querySelectorAll('details.more')) d.addEventListener('toggle', () => { if (d.open) closeMore(d); });
 function paintToggles() {
-  $('#menu-theme').textContent = `Day and night: ${{ system: 'follow the system', light: 'day', dark: 'night' }[theme]}`;
   $('#menu-snap').setAttribute('aria-checked', String(snapOn));
   $('#menu-minimap').setAttribute('aria-checked', String(miniOn));
 }
@@ -3778,15 +4178,12 @@ $('.board-wrap').addEventListener('drop', e => {
 });
 $('#boards-list').addEventListener('click', boardsClick);
 $('#boards-new').addEventListener('click', () => { $('#boards').close(); createBoard(); toast('New board'); });
-$('#boards-template').addEventListener('click', () => { $('#boards').close(); openPop('template'); });
+$('#boards-template').addEventListener('click', () => { $('#boards').close(); openTemplates(); });
 $('#boards-close').addEventListener('click', () => $('#boards').close());
 $('#ctx').addEventListener('change', ctxChange);
 onDoc('pointerdown', e => { if (!e.target.closest?.('.pop, #rail, .tools, #start, .boards')) closePops(); });
 $('#btn-undo').addEventListener('click', undo);
 $('#btn-done').addEventListener('click', done);
-$('#sent-pic').addEventListener('click', copyLastPicture);
-$('#sent-copytext').addEventListener('click', copyLastText);
-$('#sent-close').addEventListener('click', () => { $('#sent-bar').hidden = true; });
 $('#start-pics').addEventListener('click', e => {
   if (!e.target.closest('[data-unpic]')) return;
   pushUndo();
@@ -3794,10 +4191,9 @@ $('#start-pics').addEventListener('click', e => {
   commit('board', 'Removed the pictures'); updateEmpty();
 });
 $('#ask').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); done(); } });
+$('#ask').addEventListener('input', e => { e.target.style.height = 'auto'; e.target.style.height = `${Math.min(180, e.target.scrollHeight)}px`; });
 $('#first').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); startLoop(); } });
-$('#btn-start').addEventListener('click', startLoop);
-$('#wait-copy').addEventListener('click', copyStarter);
-$('#wait-back').addEventListener('click', startOver);
+$('#btn-start').addEventListener('click', () => startLoop());
 $('#share-copy').addEventListener('click', () => copyText($('#share-url').value).then(ok => { $('#share-copy').textContent = ok ? 'Copied ✓' : 'Copy failed'; setTimeout(() => { $('#share-copy').textContent = 'Copy link'; }, 1500); }));
 $('#share-close').addEventListener('click', () => $('#share').close());
 $('#docked-reset').addEventListener('click', async () => {
@@ -3810,9 +4206,10 @@ function startOver() {
   const hasDiagram = state.nodes.size || state.groups.size;
   if (hasDiagram && !(pipWin || window).confirm('Clear this board and start over?')) return;
   // keep: false clears everything, pictures, ink and comments included.
-  pushUndo(); parseInto('flowchart LR', { replace: true, keep: false }); state.pos.clear(); showNote('');
-  lastSent = null; showSentBar();
-  started = false; commit('board', 'Started over'); updateEmpty();
+  pushUndo(); parseInto('flowchart LR', { replace: true, keep: false }); state.pos.clear();
+  // A cleared board starts its chat afresh: the next message carries the instructions again.
+  lastSent = null; mergeOffer = null; store.del(chatKey());
+  started = false; landingOff = false; commit('board', 'Cleared the board'); updateEmpty(); paintChat(); paintAi();
 }
 
 // Day and night: follow the system, or pick light or dark. Applied to the floating window too.
@@ -3827,23 +4224,18 @@ function setTheme(t) {
   }
   render();
 }
-$('#ai-chips').addEventListener('click', e => { const b = e.target.closest('[data-ai]'); if (b) setAi(b.dataset.ai); });
-$('#start-sample').addEventListener('click', () => { applyText(SAMPLE, 'sample'); updateEmpty(); });
-$('#note-close').addEventListener('click', () => showNote(''));
-$('#note-merge').addEventListener('click', () => {
-  const o = mergeOffer; if (!o) return;
-  undo();
-  const r = applyText(o.src, 'link');
-  showNote('Kept the board and merged the changes into it', r.warnings || []);
-});
-$('.tools').addEventListener('click', e => {
+$('.top-right').addEventListener('click', e => {
   const pick = e.target.closest('[data-ai]'); if (pick) { setAi(pick.dataset.ai); closeMore(); toast(`Assistant: ${ai().name}`); return; }
   const act = e.target.closest('[data-act]')?.dataset.act;
   if (!act) return;
-  closeMore();
+  // Switches keep their menu open, so the change shows.
+  if (!['snap', 'minimap'].includes(act)) closeMore();
+  runAct(act);
+});
+function runAct(act) {
   if (act === 'boards') openBoards();
-  if (act === 'zoomsel') zoomToSelection();
-  if (act === 'theme') { setTheme(THEMES[(THEMES.indexOf(theme) + 1) % THEMES.length]); paintToggles(); }
+  if (act === 'newboard') { createBoard(); toast('New board'); }
+  if (act === 'rename') { const n = (pipWin || window).prompt('Name this board', currentBoard().name); if (n && n.trim()) renameBoard(boardId, n.trim()); }
   if (act === 'snap') { snapOn = !snapOn; store.set(SNAP_KEY, snapOn ? 'on' : 'off'); paintToggles(); toast(snapOn ? 'Snapping to the grid' : 'Snapping off'); }
   if (act === 'minimap') { miniOn = !miniOn; store.set(MINI_KEY, miniOn ? 'on' : 'off'); paintToggles(); render(); }
   if (act === 'steps') numberSteps();
@@ -3854,7 +4246,7 @@ $('.tools').addEventListener('click', e => {
   if (act === 'mmd') downloadBoardFile();
   if (act === 'folder') saveToFolder();
   if (act === 'open') pickFiles();
-  if (act === 'templates') openPop('template');
+  if (act === 'templates') openTemplates();
   if (act === 'tidy') { pushUndo(); tidy(); commit('board', 'Tidied up the layout'); fit(); }
   if (act === 'fit') fit();
   if (act === 'starter') copyStarter();
@@ -3864,8 +4256,45 @@ $('.tools').addEventListener('click', e => {
   if (act === 'mermaid') copyText(toMermaid()).then(ok => toast(ok ? 'Mermaid copied' : 'Copying failed'));
   if (act === 'source') { document.body.classList.toggle('show-panel'); render(); }
   if (act === 'new') startOver();
+}
+onDoc('click', e => {
+  if (!e.target.closest('details.more')) closeMore();
+  if (!e.target.closest('.zb-wrap')) showTidy(false);
 });
-onDoc('click', e => { if (!e.target.closest('details.more')) closeMore(); });
+
+// ---------- zoom bar: Tidy up and flow steps, zoom ----------
+
+function showTidy(on) { const m = $('#tidy-menu'); if (!m) return; m.hidden = !on; $('#tidy-btn').setAttribute('aria-expanded', String(on)); }
+$('#tidy-btn').addEventListener('click', () => showTidy($('#tidy-menu').hidden));
+$('#tidy-menu').addEventListener('click', e => { const act = e.target.closest('[data-act]')?.dataset.act; if (act) { showTidy(false); runAct(act); } });
+// Zoom around the middle of the board.
+function zoomBy(f, to = null) {
+  const r = svg.getBoundingClientRect(), cx = r.width / 2, cy = r.height / 2;
+  const k = Math.min(3, Math.max(0.2, to ?? view.k * f));
+  view.x = cx - (cx - view.x) * k / view.k; view.y = cy - (cy - view.y) * k / view.k; view.k = k;
+  render();
+}
+$('#zoom-in').addEventListener('click', () => zoomBy(1.2));
+$('#zoom-out').addEventListener('click', () => zoomBy(1 / 1.2));
+$('#zoom-pct').addEventListener('click', () => zoomBy(1, 1));
+$('#zoom-fit').addEventListener('click', () => fit());
+function paintZoom() { const z = $('#zoom-pct'); if (z) z.textContent = `${Math.round(view.k * 100)}%`; }
+
+// Day and night: one button that goes system → day → night.
+const THEME_ICONS = {
+  system: '<circle cx="10" cy="10" r="6.5"/><path d="M10 3.5 A6.5 6.5 0 0 1 10 16.5 Z" fill="currentColor"/>',
+  light: '<circle cx="10" cy="10" r="3.5"/><path d="M10 2 V4 M10 16 V18 M2 10 H4 M16 10 H18 M4.3 4.3 L5.7 5.7 M14.3 14.3 L15.7 15.7 M4.3 15.7 L5.7 14.3 M14.3 5.7 L15.7 4.3"/>',
+  dark: '<path d="M15.5 12.5 A6.5 6.5 0 0 1 7.5 4.5 A6.5 6.5 0 1 0 15.5 12.5 Z"/>',
+};
+function paintThemeBtn() {
+  for (const b of [$('#btn-theme'), $('#home-theme')]) {
+    if (!b) continue;
+    b.innerHTML = `<svg class="ic" viewBox="0 0 20 20" aria-hidden="true">${THEME_ICONS[theme]}</svg>`;
+    b.title = `Day and night: ${{ system: 'follows the system', light: 'day', dark: 'night' }[theme]}. Click to change.`;
+  }
+}
+$('#btn-theme').addEventListener('click', () => { setTheme(THEMES[(THEMES.indexOf(theme) + 1) % THEMES.length]); paintThemeBtn(); toast({ system: 'Day and night follow the system', light: 'Day', dark: 'Night' }[theme]); });
+$('#boards-clear').addEventListener('click', () => { $('#boards').close(); startOver(); });
 
 let sourceTimer;
 $('#source').addEventListener('input', () => {
@@ -3914,8 +4343,12 @@ const SAMPLE = `flowchart LR
   updateReadout();
   updateFloatUI();
   setTheme(theme);
+  paintThemeBtn();
+  setView(store.get(VIEW_KEY) === 'canvas' ? 'canvas' : 'split');
   paintAi();
   fit();
   updateEmpty();
+  // Home first when there is nothing on this board yet; a link from the chat goes straight to the board.
+  if (!/^#(m|note|z)=/.test(location.hash) && !state.nodes.size && !state.groups.size && !thread().length) showHome(true);
   readHash();
 })();

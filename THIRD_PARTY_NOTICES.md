@@ -15,3 +15,7 @@ Microsoft's guidelines also ask that the icons are not cropped, flipped, rotated
 ## qrcode-generator
 
 `vendor/qrcode.js` is qrcode-generator by Kazuhiko Arase, used for the QR code. MIT License, Copyright (c) 2009 Kazuhiko Arase. The license notice is at the top of the file. "QR Code" is a registered trademark of DENSO WAVE INCORPORATED.
+
+## AI assistant logos
+
+`vendor/ai/` holds the logos of the assistants Kiertotie can work with, taken from orim, which took them from each company's own site: the Claude symbol (https://claude.com/), the OpenAI Blossom (https://openai.com/brand/) and the Gemini sparkle (Google). They only name which chat a button opens or sends to. The Copilot icon (`vendor/ai/copilot.svg`) is from @lobehub/icons-static-svg 1.102.0 (MIT License, Copyright (c) LobeHub). Claude is a trademark of Anthropic, ChatGPT and OpenAI of OpenAI, Gemini of Google, and Copilot of Microsoft.

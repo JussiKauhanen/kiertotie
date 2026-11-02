@@ -5,88 +5,141 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Kiertotie</title>
 <meta name="description" content="A diagram board for AI chats that can only chat: the chat answers with a link, you edit, Send passes it back.">
-<link rel="stylesheet" href="style.css?v=20261102-6">
+<link rel="stylesheet" href="style.css?v=20261105-2">
 </head>
 <body>
-<header class="bar">
-  <div class="brand"><strong>Kiertotie</strong><button id="board-name" class="board-name" title="Your boards"></button></div>
-  <div class="tools" role="toolbar" aria-label="Board actions">
-    <details class="more ai-pick-menu">
-      <summary id="ai-badge" class="ai-badge" title="Your assistant"></summary>
-      <div class="menu" role="menu">
-        <div class="menu-label first">Assistant</div>
-        <div id="ai-menu" class="ai-menu"></div>
-        <button data-act="starter" role="menuitem" id="menu-starter">Copy the instructions again</button>
+<div id="home" class="home" hidden>
+  <header class="home-top">
+    <span class="wordmark"><svg class="mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="2" width="20" height="20" rx="6" fill="#ffd23f"/><path d="M8 9.5 A4.5 4.5 0 0 1 16 8 M16 8 V5 M16 8 H13 M16 14.5 A4.5 4.5 0 0 1 8 16 M8 16 V19 M8 16 H11" fill="none" stroke="#1a1a1a" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg><b>Kiertotie</b></span>
+    <span class="grow"></span>
+    <button id="home-theme" class="ibtn" aria-label="Day and night"></button>
+    <button id="home-import" class="tbtn"><svg class="ic" viewBox="0 0 20 20" aria-hidden="true"><path d="M10 3 V12 M6.5 8.5 L10 12 L13.5 8.5 M3.5 13 V16.5 H16.5 V13"/></svg><span>Import</span></button>
+  </header>
+  <input type="file" id="home-file" accept="image/*" multiple hidden>
+  <div id="start" class="hero">
+    <div class="hero-left">
+      <div id="pick" class="step">
+        <h1>Ask your chat.<br><mark>Get a board.</mark></h1>
+        <p class="lead">Kiertotie writes the instructions for your AI chat. Its answer comes back as a link, and the diagram opens here, ready to edit.</p>
+        <p class="pick-q">Which chat do you use?</p>
+        <div id="ai-tiles" class="ai-tiles" role="list"></div>
       </div>
-    </details>
-    <button id="btn-float" hidden title="Float the board above all windows, so it stays in view next to your chat"><svg class="ic" viewBox="0 0 20 20" aria-hidden="true"><rect x="2.5" y="4" width="15" height="12" rx="2"/><rect x="10" y="9.5" width="6" height="5" rx="1"/></svg><span>Float</span></button>
-    <button id="btn-mark" aria-pressed="false" title="Mark boxes your next request is about (M)"><svg class="ic" viewBox="0 0 20 20" aria-hidden="true"><path d="M4 16 L6 14 L13.5 6.5 L15.5 8.5 L8 16 Z M12 5 L14 3 L17 6 L15 8"/></svg><span>Highlight</span></button>
-    <span class="tsep"></span>
-    <button id="btn-undo" class="icon-only" title="Undo (Ctrl+Z)" aria-label="Undo"><svg class="ic" viewBox="0 0 20 20" aria-hidden="true"><path d="M7.5 5 L3.5 9 L7.5 13 M3.5 9 H12 A4.5 4.5 0 0 1 12 18 H9"/></svg></button>
-    <button id="btn-redo" class="icon-only" title="Redo (Ctrl+Shift+Z)" aria-label="Redo"><svg class="ic" viewBox="0 0 20 20" aria-hidden="true"><path d="M12.5 5 L16.5 9 L12.5 13 M16.5 9 H8 A4.5 4.5 0 0 0 8 18 H11"/></svg></button>
+      <div id="ask-step" class="step" hidden>
+        <button id="pick-back" type="button" class="pick-back" title="Pick another chat"></button>
+        <h1 id="ask-h" class="ask-h"></h1>
+        <div class="prompt">
+          <textarea id="first" rows="3" placeholder="Describe what to draw, or paste a screenshot to replicate as editable…"></textarea>
+          <div id="start-pics" class="start-pics" hidden></div>
+          <div class="prompt-foot">
+            <button id="first-attach" type="button" class="pic-btn" title="Add a screenshot or picture to replicate"><svg class="ic" viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="4" width="14" height="12" rx="1.5"/><path d="M3 13 L7.5 9 L11 12 L13 10.5 L17 14"/><circle cx="13" cy="7.5" r="1"/></svg><span>Add a picture</span></button>
+            <span class="grow"></span>
+            <button id="btn-start" class="big"></button>
+          </div>
+        </div>
+        <p id="start-help" class="muted small land-help"></p>
+        <div id="land-ideas" class="land-ideas" aria-label="Ideas"></div>
+      </div>
+    </div>
+    <div class="hero-right"><div id="demo" class="demo" aria-hidden="true"></div></div>
+  </div>
+  <section class="shelf" aria-label="Boards and templates">
+    <div class="sec-head">
+      <div class="seg" id="shelf-seg" role="group" aria-label="Show">
+        <button type="button" data-shelf="boards" aria-pressed="true">Your boards</button>
+        <button type="button" data-shelf="templates" aria-pressed="false">Templates</button>
+      </div>
+      <span class="grow"></span>
+      <button id="start-template" class="ghost-btn" hidden>All templates</button>
+    </div>
+    <div id="shelf-cards" class="land-cards"></div>
+    <p class="shelf-foot">Boards stay in this browser. Nothing is uploaded.</p>
+  </section>
+</div>
+<div class="app" id="app">
+<header class="top">
+  <div class="brand">
+    <button id="home-btn" class="home-btn" title="Home: all your boards" aria-label="Home"><svg class="mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="2" width="20" height="20" rx="6" fill="#ffd23f"/><path d="M8 9.5 A4.5 4.5 0 0 1 16 8 M16 8 V5 M16 8 H13 M16 14.5 A4.5 4.5 0 0 1 8 16 M8 16 V19 M8 16 H11" fill="none" stroke="#1a1a1a" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+    <input id="title" class="title-input" placeholder="Untitled board" aria-label="Board name" spellcheck="false" autocomplete="off">
+  </div>
+  <div class="seg" id="view-seg" role="group" aria-label="Panels">
+    <button data-view="split" aria-pressed="true" title="The board with the chat beside it">Chat</button>
+    <button data-view="canvas" aria-pressed="false" title="Only the board">Board</button>
+  </div>
+  <div class="top-right" role="toolbar" aria-label="Board actions">
+    <button id="btn-undo" class="ibtn" title="Undo (Ctrl+Z)" aria-label="Undo"><svg class="ic" viewBox="0 0 20 20" aria-hidden="true"><path d="M7.5 5 L3.5 9 L7.5 13 M3.5 9 H12 A4.5 4.5 0 0 1 12 18 H9"/></svg></button>
+    <button id="btn-redo" class="ibtn" title="Redo (Ctrl+Shift+Z)" aria-label="Redo"><svg class="ic" viewBox="0 0 20 20" aria-hidden="true"><path d="M12.5 5 L16.5 9 L12.5 13 M16.5 9 H8 A4.5 4.5 0 0 0 8 18 H11"/></svg></button>
     <span class="tsep"></span>
     <details class="more" id="m-style">
-      <summary title="Board style, grid and minimap"><svg class="ic" viewBox="0 0 20 20" aria-hidden="true"><path d="M10 2.5 A7.5 7.5 0 1 0 10 17.5 C11.5 17.5 11.5 15.5 10.5 14.5 C9.5 13.5 10.5 12 12 12 H14 A3.5 3.5 0 0 0 17.5 8.5 C17.5 5 14 2.5 10 2.5 Z"/><circle cx="6.5" cy="9" r="1"/><circle cx="9" cy="6" r="1"/><circle cx="13" cy="6.5" r="1"/></svg><span>Style</span></summary>
-      <div class="menu" role="menu">
+      <summary title="Board style: colours and fonts for the whole board"><svg class="ic" viewBox="0 0 20 20" aria-hidden="true"><path d="M10 2.5 A7.5 7.5 0 1 0 10 17.5 C11.5 17.5 11.5 15.5 10.5 14.5 C9.5 13.5 10.5 12 12 12 H14 A3.5 3.5 0 0 0 17.5 8.5 C17.5 5 14 2.5 10 2.5 Z"/><circle cx="6.5" cy="9" r="1"/><circle cx="9" cy="6" r="1"/><circle cx="13" cy="6.5" r="1"/></svg><span>Style</span></summary>
+      <div class="menu style-menu" role="menu">
         <div class="menu-label first">Board style</div>
         <div id="style-picks" class="style-picks"></div>
-        <div class="menu-label">Board</div>
-        <button data-act="snap" role="menuitemcheckbox" id="menu-snap">Snap to grid</button>
-        <button data-act="minimap" role="menuitemcheckbox" id="menu-minimap">Minimap</button>
-        <button data-act="theme" role="menuitem" id="menu-theme">Day and night</button>
+        <p class="menu-note">Colours you set on a box stay as they are.</p>
+        <div class="menu-sep"></div>
+        <button data-act="snap" role="menuitemcheckbox" id="menu-snap" class="switch-row"><span>Snap to grid</span><i class="switch"></i></button>
+        <button data-act="minimap" role="menuitemcheckbox" id="menu-minimap" class="switch-row"><span>Minimap</span><i class="switch"></i></button>
       </div>
     </details>
-    <button data-act="templates" title="Templates"><svg class="ic" viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="3" width="6" height="6" rx="1"/><rect x="11" y="3" width="6" height="6" rx="1"/><rect x="3" y="11" width="6" height="6" rx="1"/><rect x="11" y="11" width="6" height="6" rx="1"/></svg><span>Templates</span></button>
+    <button data-act="templates" class="tbtn" title="Templates"><svg class="ic" viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="3" width="6" height="6" rx="1"/><rect x="11" y="3" width="6" height="6" rx="1"/><rect x="3" y="11" width="6" height="6" rx="1"/><rect x="11" y="11" width="6" height="6" rx="1"/></svg><span>Templates</span></button>
     <details class="more" id="m-import">
       <summary title="Open files and Mermaid"><svg class="ic" viewBox="0 0 20 20" aria-hidden="true"><path d="M10 3 V12 M6.5 8.5 L10 12 L13.5 8.5 M3.5 13 V16.5 H16.5 V13"/></svg><span>Import</span></summary>
-      <div class="menu" role="menu">
-        <button data-act="open" role="menuitem">Open files…</button>
-        <button data-act="source" role="menuitem">Edit the Mermaid source</button>
+      <div class="menu right" role="menu">
+        <button data-act="open" role="menuitem" class="mi"><span class="mi-ic"><svg class="ic" viewBox="0 0 20 20" aria-hidden="true"><path d="M3 6 V15.5 H17 V8 H9.5 L8 6 Z"/></svg></span><span class="mi-t"><b>Open files…</b><small>.mmd, .md or .txt as new boards; pictures onto this one</small></span></button>
+        <button data-act="source" role="menuitem" class="mi"><span class="mi-ic"><svg class="ic" viewBox="0 0 20 20" aria-hidden="true"><path d="M7 6 L3 10 L7 14 M13 6 L17 10 L13 14"/></svg></span><span class="mi-t"><b>Edit the Mermaid source</b><small>The code beside the board, and a log of changes</small></span></button>
         <p class="menu-note">You can also paste a diagram or a picture straight onto the board, or drop files on it.</p>
       </div>
     </details>
     <details class="more primary-menu" id="m-export">
-      <summary title="Share and download"><span>Export</span></summary>
-      <div class="menu" role="menu">
-        <button data-act="share" role="menuitem">Share link and QR code…</button>
-        <button data-act="mermaid" role="menuitem">Copy as Mermaid</button>
-        <div class="menu-label">Download</div>
-        <button data-act="png" role="menuitem">PNG image</button>
-        <button data-act="svg" role="menuitem">SVG image</button>
-        <button data-act="drawio" role="menuitem">draw.io file</button>
-        <button data-act="ado" role="menuitem">Azure DevOps tickets (.csv)</button>
-        <button data-act="mmd" role="menuitem">This board (.mmd)</button>
-        <button data-act="folder" role="menuitem">All boards to a folder…</button>
+      <summary title="Share and download"><svg class="ic ex-ic" viewBox="0 0 20 20" aria-hidden="true"><path d="M10 13 V3.5 M6.5 7 L10 3.5 L13.5 7 M4 11 V16.5 H16 V11"/></svg><span>Export</span><svg class="ic chev" viewBox="0 0 20 20" aria-hidden="true"><path d="M6 8 L10 12 L14 8"/></svg></summary>
+      <div class="menu right" role="menu">
+        <button data-act="share" role="menuitem" class="mi"><span class="mi-ic"><svg class="ic" viewBox="0 0 20 20" aria-hidden="true"><circle cx="5.5" cy="10" r="2"/><circle cx="14.5" cy="5" r="2"/><circle cx="14.5" cy="15" r="2"/><path d="M7.3 9 L12.7 6 M7.3 11 L12.7 14"/></svg></span><span class="mi-t"><b>Share link and QR code</b><small>The whole board inside a link, nothing uploaded</small></span></button>
+        <button data-act="mermaid" role="menuitem" class="mi"><span class="mi-ic"><svg class="ic" viewBox="0 0 20 20" aria-hidden="true"><path d="M7 3 H15 V14 H7 Z M5 6 V17 H13"/></svg></span><span class="mi-t"><b>Copy as Mermaid</b><small>Plain code for GitHub, Azure DevOps or Notion</small></span></button>
+        <div class="menu-sep"></div>
+        <button data-act="png" role="menuitem" class="mi"><span class="mi-ic"><svg class="ic" viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="4" width="14" height="12" rx="1.5"/><path d="M3 13 L7.5 9 L11 12 L13 10.5 L17 14"/></svg></span><span class="mi-t"><b>PNG image</b><small>Twice the size, with the current colours</small></span></button>
+        <button data-act="svg" role="menuitem" class="mi"><span class="mi-ic"><svg class="ic" viewBox="0 0 20 20" aria-hidden="true"><path d="M4 15 C6 6, 14 6, 16 15 M10 4 V8"/><circle cx="10" cy="4" r="1.5"/></svg></span><span class="mi-t"><b>SVG image</b><small>Scales cleanly, icons included</small></span></button>
+        <button data-act="drawio" role="menuitem" class="mi"><span class="mi-ic"><svg class="ic" viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="3" width="6" height="5" rx="1"/><rect x="11" y="12" width="6" height="5" rx="1"/><path d="M6 8 V14.5 H11"/></svg></span><span class="mi-t"><b>draw.io file</b><small>Editable in draw.io and diagrams.net</small></span></button>
+        <button data-act="ado" role="menuitem" class="mi"><span class="mi-ic"><svg class="ic" viewBox="0 0 20 20" aria-hidden="true"><rect x="3.5" y="3.5" width="13" height="13" rx="2"/><path d="M6.5 7.5 H13.5 M6.5 10.5 H13.5 M6.5 13.5 H10.5"/></svg></span><span class="mi-t"><b>Azure DevOps tickets (.csv)</b><small>Import under Boards, Queries, Import work items</small></span></button>
+        <div class="menu-sep"></div>
+        <button data-act="mmd" role="menuitem" class="mi"><span class="mi-ic"><svg class="ic" viewBox="0 0 20 20" aria-hidden="true"><path d="M5 3 H12 L15.5 6.5 V17 H5 Z M12 3 V6.5 H15.5"/></svg></span><span class="mi-t"><b>This board (.mmd)</b><small>Mermaid with the layout, to open here again</small></span></button>
+        <button data-act="folder" role="menuitem" class="mi"><span class="mi-ic"><svg class="ic" viewBox="0 0 20 20" aria-hidden="true"><path d="M3 6 V15.5 H17 V8 H9.5 L8 6 Z"/></svg></span><span class="mi-t"><b>All boards to a folder…</b><small>One .mmd per board (Chrome and Edge)</small></span></button>
       </div>
     </details>
-    <details class="more" id="more">
-      <summary title="More" aria-label="More"><svg class="ic" viewBox="0 0 20 20" aria-hidden="true"><circle cx="4.5" cy="10" r="1.4"/><circle cx="10" cy="10" r="1.4"/><circle cx="15.5" cy="10" r="1.4"/></svg></summary>
-      <div class="menu" role="menu">
-        <button data-act="boards" role="menuitem">Boards…</button>
-        <div class="menu-label">View</div>
-        <button data-act="fit" role="menuitem">Fit to screen <kbd>Shift 1</kbd></button>
-        <button data-act="zoomsel" role="menuitem">Zoom to selection <kbd>Shift 2</kbd></button>
-        <button data-act="tidy" role="menuitem">Tidy up the layout</button>
-        <div class="menu-label">Flow steps</div>
-        <button data-act="steps" role="menuitem">Number the steps</button>
-        <button data-act="legend" role="menuitem">Add a step legend</button>
-        <button data-act="nosteps" role="menuitem">Remove step numbers</button>
-        <div class="menu-label">Board</div>
-        <button data-act="new" role="menuitem">Clear this board</button>
-      </div>
-    </details>
+    <button id="btn-float" class="ibtn" hidden title="Float the board above all windows, next to your chat" aria-label="Float"><svg class="ic" viewBox="0 0 20 20" aria-hidden="true"><rect x="2.5" y="4" width="15" height="12" rx="2"/><rect x="10" y="9.5" width="6" height="5" rx="1"/></svg></button>
+    <button id="btn-theme" class="ibtn" aria-label="Day and night"></button>
   </div>
 </header>
+<main class="work">
+  <aside id="chat" class="chat" aria-label="Chat with your assistant">
+    <div class="chat-head">
+      <details class="more ai-switch" id="m-ai">
+        <summary class="chat-brand" title="Choose your assistant"><span id="chat-mark"></span><span class="cb-t"><b id="chat-name"></b><small id="chat-host"></small></span><svg class="ic chev" viewBox="0 0 20 20" aria-hidden="true"><path d="M6 8 L10 12 L14 8"/></svg></summary>
+        <div class="menu" role="menu">
+          <div class="menu-label first">Your assistant</div>
+          <div id="ai-menu" class="ai-menu"></div>
+          <div class="menu-sep"></div>
+          <button data-act="starter" role="menuitem" class="mi"><span class="mi-ic"><svg class="ic" viewBox="0 0 20 20" aria-hidden="true"><path d="M7 3 H15 V14 H7 Z M5 6 V17 H13"/></svg></span><span class="mi-t"><b>Copy the instructions again</b><small>For a new chat: paste them first</small></span></button>
+        </div>
+      </details>
+      <a id="chat-open" class="ibtn" target="kiertotie-chat" rel="noopener"><svg class="ic" viewBox="0 0 20 20" aria-hidden="true"><path d="M8 4 H4 V16 H16 V12 M11 3 H17 V9 M17 3 L9 11"/></svg></a>
+    </div>
+    <div id="chat-log" class="chat-log" aria-live="polite"></div>
+    <form id="chat-form" class="chat-input" autocomplete="off">
+      <div class="chat-box">
+        <div id="chat-chips" class="chat-chips" hidden></div>
+        <textarea id="ask" rows="2"></textarea>
+        <div class="chat-foot">
+          <button type="button" id="chat-attach" class="ibtn" title="Add a picture: a screenshot to replicate, for example" aria-label="Add a picture"><svg class="ic" viewBox="0 0 20 20" aria-hidden="true"><path d="M10 4.5 V15.5 M4.5 10 H15.5"/></svg></button>
+          <input type="file" id="chat-file" accept="image/*" multiple hidden>
+          <span id="chat-hint" class="chat-hint"></span>
+          <span class="grow"></span>
+          <button type="submit" id="btn-done" class="send-round" aria-label="Send"><svg class="ic" viewBox="0 0 20 20" aria-hidden="true"><path d="M10 16 V4 M5 9 L10 4 L15 9"/></svg></button>
+        </div>
+      </div>
+    </form>
+  </aside>
 
-<div id="note" class="note" hidden role="status">
-  <span class="note-label">Latest change</span>
-  <span id="note-text"></span>
-  <span id="note-warn" class="note-warn" hidden></span>
-  <button id="note-merge" class="note-merge" hidden></button>
-  <button id="note-close" aria-label="Hide">✕</button>
-</div>
 
-<main class="layout">
+
   <section class="board-wrap" aria-label="Diagram board">
     <svg id="board" tabindex="0" aria-label="Diagram canvas">
       <defs>
@@ -100,34 +153,6 @@
       <g id="viewport"></g>
     </svg>
 
-    <div id="start" class="start" hidden>
-      <h1>Draw with your AI chat</h1>
-      <fieldset class="ai-pick">
-        <legend>Your assistant</legend>
-        <div id="ai-chips" class="ai-chips" role="radiogroup"></div>
-      </fieldset>
-      <label for="first">What should it draw? <span class="muted">(optional)</span></label>
-      <textarea id="first" rows="3" placeholder="e.g. how an AD group grants access to an Azure web app. You can paste a picture here too."></textarea>
-      <div id="start-pics" class="start-pics" hidden></div>
-      <button id="btn-start" class="big"></button>
-      <p id="start-help" class="muted small"></p>
-      <div class="row-links"><button id="start-sample" class="link">or look at a sample first</button><button id="start-template" class="link">start from a template</button></div>
-    </div>
-
-    <div id="waiting" class="start waiting" hidden>
-      <h1>Now over to <span class="ai-name"></span></h1>
-      <a id="wait-open" class="big btn-link" target="kiertotie-chat"></a>
-      <div id="mockup" class="mockup"></div>
-      <ol class="sr-only">
-        <li>Open <span class="ai-name"></span>.</li>
-        <li>Paste the instructions into its message box with <span class="paste-key"></span>, and send.</li>
-        <li>When it answers, click Open in Kiertotie. The diagram appears here.</li>
-      </ol>
-      <div class="row-links">
-        <button id="wait-copy" class="link">Copy the instructions again</button>
-        <button id="wait-back" class="link">Start over</button>
-      </div>
-    </div>
 
     <nav id="rail" class="rail" aria-label="Add to the board">
       <button data-tool="select" aria-pressed="true" title="Select and move (V)"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 3 L15 10 L10.5 11 L13 16 L11 17 L8.5 12 L5 15 Z"/></svg></button>
@@ -136,9 +161,10 @@
       <button data-pop="shape" aria-expanded="false" title="Shapes (R)"><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="3" width="9" height="9" rx="1.5"/><circle cx="13" cy="13" r="4.5"/></svg></button>
       <button data-pop="screen" aria-expanded="false" title="Screens and UI pieces for mockups"><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="6" y="2.5" width="8" height="15" rx="2"/><path d="M8.5 4.8 H11.5 M8.5 8 H11.5 M8.5 10.5 H11.5 M8.5 13 H10.5"/></svg></button>
       <button data-pop="draw" aria-expanded="false" title="Pen, highlighter, arrow and eraser (P)"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 16 L5 12 L13.5 3.5 L16.5 6.5 L8 15 Z M11.5 5.5 L14.5 8.5"/></svg></button>
+      <button id="rail-mark" data-mark aria-pressed="false" title="Highlight: mark what your next request is about (M)"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 17.5 V3 M5 3.5 H15.5 L13 7.5 L15.5 11.5 H5"/></svg></button>
       <button data-tool="comment" title="Comment (C)"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 4 H16 V13 H9 L5 16.5 V13 H4 Z"/></svg></button>
       <button data-tool="frame" title="Frame: a group to drop boxes into"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M6 2 V18 M14 2 V18 M2 6 H18 M2 14 H18"/></svg></button>
-      <button data-pop="template" aria-expanded="false" title="Templates"><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="3" width="6" height="6" rx="1"/><rect x="11" y="3" width="6" height="6" rx="1"/><rect x="3" y="11" width="6" height="6" rx="1"/><rect x="11" y="11" width="6" height="6" rx="1"/></svg></button>
+      <button data-act-tpl title="Templates"><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="3" width="6" height="6" rx="1"/><rect x="11" y="3" width="6" height="6" rx="1"/><rect x="3" y="11" width="6" height="6" rx="1"/><rect x="11" y="11" width="6" height="6" rx="1"/></svg></button>
       <button data-pop="icon" aria-expanded="false" title="Azure, Power Platform and Dynamics 365 icons (I)"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 2.5 L17 6.5 V13.5 L10 17.5 L3 13.5 V6.5 Z M3 6.5 L10 10.5 L17 6.5 M10 10.5 V17.5"/></svg></button>
     </nav>
     <div id="shape-pop" class="pop shape-pop" hidden role="menu" aria-label="Shapes">
@@ -177,9 +203,24 @@
       <div id="draw-colors" class="draw-colors"></div>
     </div>
     <svg id="minimap" class="minimap" viewBox="0 0 168 110" hidden aria-label="Minimap"></svg>
-    <div id="template-pop" class="pop template-pop" hidden aria-label="Templates">
-      <p class="muted small">An empty board takes the template; otherwise it opens as a new board.</p>
-      <div id="template-list" class="template-list"></div>
+    <div id="zoombar" class="zoombar" role="toolbar" aria-label="View">
+      <div class="zb-wrap"><button id="tidy-btn" class="zb-tidy" aria-haspopup="true" aria-expanded="false" title="Tidy up and flow steps">Tidy up</button>
+        <div id="tidy-menu" class="menu up" hidden role="menu">
+          <button data-act="tidy" role="menuitem" class="mi"><span class="mi-ic"><svg class="ic" viewBox="0 0 20 20"><rect x="3" y="3" width="5" height="5" rx="1"/><rect x="12" y="3" width="5" height="5" rx="1"/><rect x="3" y="12" width="5" height="5" rx="1"/><rect x="12" y="12" width="5" height="5" rx="1"/></svg></span><span class="mi-t"><b>Tidy up the layout</b><small>Boxes you moved go back to the automatic layout</small></span></button>
+          <div class="menu-sep"></div>
+          <div class="menu-label first">Flow steps</div>
+          <button data-act="steps" role="menuitem" class="mi"><span class="mi-ic num">①</span><span class="mi-t"><b>Number the steps</b><small>① ② ③ on the lines in flow order, or the selected line</small></span></button>
+          <button data-act="legend" role="menuitem" class="mi"><span class="mi-ic"><svg class="ic" viewBox="0 0 20 20"><rect x="3" y="3.5" width="14" height="13" rx="1.5"/><path d="M3 7.5 H17 M7.5 7.5 V16.5"/></svg></span><span class="mi-t"><b>Add a step legend</b><small>A table of the numbered steps beside the diagram</small></span></button>
+          <button data-act="nosteps" role="menuitem" class="mi"><span class="mi-ic"><svg class="ic" viewBox="0 0 20 20"><path d="M5 5 L15 15 M15 5 L5 15"/></svg></span><span class="mi-t"><b>Remove step numbers</b><small>Keeps the rest of the labels</small></span></button>
+          <div class="menu-sep"></div>
+          <button data-act="new" role="menuitem" class="mi danger"><span class="mi-ic"><svg class="ic" viewBox="0 0 20 20" aria-hidden="true"><path d="M3.5 5.5 H16.5 M8 5.5 V3.5 H12 V5.5 M5.5 5.5 L6.3 16.5 H13.7 L14.5 5.5"/></svg></span><span class="mi-t"><b>Clear the board</b><small>Removes everything; Undo brings it back</small></span></button>
+        </div>
+      </div>
+      <span class="zb-sep"></span>
+      <button id="zoom-out" class="zb-ic" title="Zoom out" aria-label="Zoom out"><svg class="ic" viewBox="0 0 20 20"><path d="M5 10 H15"/></svg></button>
+      <button id="zoom-pct" class="zb-pct" title="Zoom to 100%">100%</button>
+      <button id="zoom-in" class="zb-ic" title="Zoom in" aria-label="Zoom in"><svg class="ic" viewBox="0 0 20 20"><path d="M5 10 H15 M10 5 V15"/></svg></button>
+      <button id="zoom-fit" class="zb-ic" title="Fit to screen (Shift+1)" aria-label="Fit to screen"><svg class="ic" viewBox="0 0 20 20"><path d="M3.5 7.5 V3.5 H7.5 M12.5 3.5 H16.5 V7.5 M16.5 12.5 V16.5 H12.5 M7.5 16.5 H3.5 V12.5"/></svg></button>
     </div>
     <div id="ctx" class="ctx" hidden role="toolbar" aria-label="Selection"></div>
 
@@ -198,18 +239,8 @@
     </div>
   </aside>
 </main>
-
-<div id="sent-bar" class="sent-bar" hidden role="status">
-  <span id="sent-text"></span>
-  <button id="sent-pic" class="primary">Copy picture</button>
-  <button id="sent-copytext" class="link">copy the text again</button>
-  <button id="sent-close" aria-label="Hide">✕</button>
 </div>
-<footer id="composer" class="composer" hidden>
-  <span id="pic-chip" class="pic-chip" hidden></span>
-  <input id="ask" type="text" autocomplete="off">
-  <button id="btn-done" class="done"></button>
-</footer>
+
 
 <div id="docked" class="docked" hidden>
   <p><strong>The board is floating.</strong> Keep this tab open: closing it closes the floating board too.</p>
@@ -222,11 +253,25 @@
 <dialog id="boards" class="share boards">
   <h2>Your boards</h2>
   <p class="muted small">Saved in this browser only. Share a link to move a board to another computer.</p>
-  <div class="row"><button id="boards-new" class="primary">New board</button><button id="boards-template">From a template…</button></div>
+  <div class="row"><button id="boards-new" class="primary">New board</button><button id="boards-template">From a template…</button><span class="grow"></span><button id="boards-clear" class="danger-link">Clear this board</button></div>
   <ul id="boards-list" class="boards-list"></ul>
   <div class="row end"><button id="boards-close">Close</button></div>
 </dialog>
 
+<dialog id="tpl-dialog" class="tpl-dialog" aria-label="Templates">
+  <div class="tpd">
+    <nav class="tpd-side" id="tpd-side" aria-label="Template categories"></nav>
+    <section class="tpd-main">
+      <div class="tpd-top">
+        <label class="tpd-search"><svg class="ic" viewBox="0 0 20 20" aria-hidden="true"><circle cx="9" cy="9" r="5.5"/><path d="M17 17 L13 13"/></svg><input id="tpd-q" type="search" placeholder="Search templates by name or use" autocomplete="off"></label>
+        <button id="tpd-close" class="icon-only tpd-x" aria-label="Close" title="Close (Esc)"><svg class="ic" viewBox="0 0 20 20"><path d="M5 5 L15 15 M15 5 L5 15"/></svg></button>
+      </div>
+      <h3 id="tpd-title">All templates</h3>
+      <p class="muted small tpd-note">An empty board takes the template; otherwise it opens as a new board.</p>
+      <div id="tpd-grid" class="tpd-grid"></div>
+    </section>
+  </div>
+</dialog>
 <dialog id="share" class="share">
   <h2>Share this diagram</h2>
   <p class="muted small">The whole diagram is inside the link, compressed. Nothing is uploaded: whoever opens it sees the board as it is now.</p>
@@ -241,6 +286,6 @@
 
 <!-- Bump ?v= on every release, so a page never pairs with a cached older script (GitHub Pages caches for 10 minutes). -->
 <script src="vendor/qrcode.js?v=1"></script>
-<script src="app.js?v=20261102-6"></script>
+<script src="app.js?v=20261105-2"></script>
 </body>
 </html>

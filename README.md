@@ -6,10 +6,10 @@ https://jussikauhanen.github.io/kiertotie/
 
 ## The loop
 
-1. **Start:** open Kiertotie, pick your assistant (Microsoft 365 Copilot, Copilot, ChatGPT, Claude, Gemini or another chat), optionally type what to draw, and press **Start with …**. That click copies the instructions and floats the board. The floating board then shows **Open …** for your chat, with a simple picture of that chat window and arrows to where you paste, send and click. (The browser only lets one click open one window, and the float takes that one.) In the chat, press Ctrl+V (⌘V) and send.
-2. **The assistant answers** with one line saying what it drew, an **Open in Kiertotie** link, and a short footer. Click the link. The floating board updates, the link's tab closes itself, and you stay in the chat.
-3. **Edit** on the board if you like: drag, double-click to rename, Delete to remove, Shift-drag to connect. **Highlight** marks the boxes your request is about.
-4. **Type your next request** at the bottom of the board and press Enter or **Send to …**. Then paste it into the chat and send. Back to step 2.
+1. **Start:** Kiertotie opens on **home**. Pick the chat you use (Microsoft 365 Copilot, Copilot, ChatGPT, Claude, Gemini or another chat), or **Work by hand** for a blank board. Then type what to draw (or paste or add a screenshot to replicate) and press **Start with …**. That click copies the instructions and floats the board, and the chat panel beside the board shows the steps, with an **Open …** button for your chat. In the chat, press Ctrl+V (⌘V) and send.
+2. **The assistant answers** with one line saying what it drew, an **Open in Kiertotie** link, and a short footer. Click the link. The board updates, the link's tab closes itself, and the assistant's line shows in the chat panel with what changed and an **Undo**.
+3. **Edit** on the board if you like: drag, double-click to rename, Delete to remove, Shift-drag to connect. The flag on the left rail (**Highlight**, M) marks the boxes your request is about; they show above the message box.
+4. **Type your next request** in the chat panel and press Enter. That copies the board and your request; paste it into the chat and send. Back to step 2.
 
 Only the first paste carries the instructions. Later pastes carry the diagram, your highlights, the request and one line, "Reply in the same Kiertotie format".
 
@@ -17,7 +17,7 @@ The banner at the top shows the assistant's line about what changed, and warns w
 
 Colours work the Mermaid way: `style web fill:#dbeafe,stroke:#2563eb`, or `classDef blue …` plus `class web,api blue`. Text switches between dark and light to stay readable on the fill.
 
-The assistant you pick is remembered. Change it under **More**. It only sets the names on the buttons and which chat **Start** opens; the links work the same with any chat.
+The assistant you pick is remembered. Change it at the top of the chat panel, or on home, where it is marked **Last used**. It only sets the names on the buttons and which chat **Start** opens; the links work the same with any chat.
 
 ## Floating board (Chrome and Edge)
 
@@ -33,7 +33,7 @@ Keep the Kiertotie tab open (in the background is fine), because closing it clos
 - A shape that's missing its closing bracket at the end of the link is still read, because chat apps often cut a trailing `]` or `)` off a link.
 - If a link comes out broken, paste the diagram text anywhere on the board instead.
 - The diagram is kept in the browser. Open board tabs update each other live.
-- **More** holds Tidy up, Fit, Copy starter, Show source and activity (the Mermaid editor and a log of changes), and Start a new diagram.
+- The **zoom bar** at the bottom right has **Tidy up** (with the flow steps), zoom out and in, the zoom level (click for 100%) and fit. **Import → Edit the Mermaid source** shows the code and a log of changes. **Clear the board** is in the Tidy up menu.
 
 ## Drawing by hand
 
@@ -46,24 +46,26 @@ Select something to get its toolbar:
 - **Boxes and frames:** colour, shape, highlight and delete.
 - **Lines:** straight, curved or elbow, solid, dotted or thick, and the arrow head.
 
-A selected box has four dots: drag one onto another box to link them, or onto empty board for a new linked box. The corner square resizes boxes and frames, and the text wraps to fit.
+A selected box has four dots: drag one onto another box to link them, or onto empty board for a new linked box. The box the line would land on lights up and the line snaps to it, also when you let go just short of its edge. The corner square resizes boxes and frames.
+
+**Text size:** the toolbar over a selected box, sticky note or text has a size picker. **Auto** (the default) is Miro-like: a resized box or text scales its text to fill it, and a sticky note writes short notes big and long ones small; the picker shows the size it comes to. A size of your own is saved as a normal Mermaid line, `style a font-size:18px`, and draw.io exports keep it.
 
 In Mermaid, icons are `kv@{ icon: "azure:key-vaults", label: "Secrets" }`, text is `t1@{ shape: text, label: "…" }` and sticky notes are `n1["…"]:::sticky`. The assistant's instructions teach it all three. When an assistant gets an icon name slightly wrong, the board picks the closest match, for example `azure:key-vault` finds `azure:key-vaults`. Positions, sizes, line routes, zones, docs, images, ink and comments are saved as `%% @…` canvas lines, which Mermaid ignores.
 
 ## Editing
 
-- **Select:** drag on empty board, or inside a frame, to select everything the rectangle touches. Shift-click adds or removes items, and Ctrl+A selects all. A frame is picked up by its title bar.
+- **Select:** drag on empty board, or inside a frame, to select everything the rectangle touches. Shift-click adds or removes items, and Ctrl+A selects all. A frame is picked up by its title bar, or by the blue move grip at the end of it.
 - **Pan:** two fingers on a trackpad, the scroll wheel, Space-drag or the middle mouse button.
 - **Several items:** move, colour, align (left, centre, right, top, middle, bottom), space evenly, put in a frame, or delete them together.
 - **Keys:** Ctrl+C / X / V copy, cut and paste, also between boards. Ctrl+D duplicates. Arrow keys nudge (Shift for 10). Ctrl+Z undoes and Ctrl+Shift+Z or Ctrl+Y redoes. V select, N note, T text, R shape, P pen, C comment, I icons, M highlight, F fit.
 - A copied selection also lands on the clipboard as Mermaid, so you can paste part of a board into the chat.
-- **Snap to grid** and the **Minimap** are on by default; switch them off in More. Alt-drag moves freely.
+- **Snap to grid** and the **Minimap** are on by default; switch them off under **Style**. Alt-drag moves freely.
 
 ## Architecture
 
 - **Zones:** frames for kinds of boundary: Internet, On-premises, Management group, Azure subscription, Resource group, Virtual network, Subnet, Perimeter / DMZ, Power Platform environment and External system. Each has its own colour, line style and title icon. A frame whose title names a kind, such as "Resource group: prod" or "VNet", becomes that zone by itself. A selected frame's toolbar sets the kind by hand.
 - **Line types:** a selected line's toolbar has HTTPS, sign-in / token, private link, VPN / ExpressRoute, event, two-way sync and SQL. Each sets the style, colour and label. Lines can also take one of seven colours; they're saved as Mermaid `linkStyle` lines.
-- **Flow steps:** **More → Number the steps** puts ① ② ③ on the line labels in flow order, or only on the selected line. **Add a step legend** makes a table of the steps next to the diagram and updates it when run again.
+- **Flow steps:** **Tidy up → Number the steps** in the zoom bar puts ① ② ③ on the line labels in flow order, or only on the selected line. **Add a step legend** makes a table of the steps next to the diagram and updates it when run again.
 
 ## Backlog tickets
 
@@ -107,18 +109,17 @@ On a bigger board, each part (a journey, an area) is a section: a top-level fram
 
 Lines that would cross boxes or screens go around them, along a lane just above or below, with rounded corners. Line labels are pills, and labels and frame titles grow a little when zoomed out so the overview stays readable. **Shift+2** (or double-clicking a screen) zooms to the selection; **Shift+1** fits the board.
 
-## Top bar
+## Layout
 
-Laid out like orim's:
-- **Assistant:** pick the assistant, or copy the instructions again.
-- **Float**, **Highlight**, **undo** and **redo**.
-- **Style:** board styles, snap, minimap, day and night.
-- **Templates**.
-- **Import:** open files, edit the Mermaid source.
-- **Export:** share link and QR, copy as Mermaid, PNG, SVG, draw.io, `.mmd`, all boards to a folder.
-- **⋯:** boards, view, flow steps, clear the board.
+Laid out like orim:
+- **Top bar:** the home button and the board name on the left (click the name to rename the board). In the middle, **Chat** shows the chat panel beside the board and **Board** shows the board alone. On the right: undo and redo, **Style** (board styles as preview cards, snap and minimap switches), **Templates** (a dialog with a thumbnail of every template), **Import**, **Export**, **Float** and day and night.
+- **Home:** on the left, pick your chat, then say what to draw (**Change** goes back to the chats). On the right, a short animation shows the loop. Below, **Your boards** (hover one to rename, duplicate or delete it) or **Templates**. AI actions are yellow, as in orim.
+- **Floating window:** a slim top (home, name, undo, redo, export), the board, and the chat with a one-line message box.
+- **Chat panel:** the assistant at the top (click it to switch, each with its logo; **Copy the instructions again** is there too), then this board's conversation: what you sent, what the assistant said it changed, and the steps for pasting, with **Copy picture** when a picture goes in a second paste. The message box at the bottom takes a request and pictures (**+**, or paste one), and shows what is highlighted. The first message on a board carries the instructions, so any board can start a chat.
+- **Editing stays with the editing tools:** the left rail adds things and has **Highlight**; the zoom bar at the bottom right has **Tidy up** (with the flow steps and **Clear the board**), zoom and fit; a selection's own toolbar does colour, shape and delete.
+- **Floating window:** the board on top and a compact chat below it.
 
-In the floating window the buttons show icons only.
+**AI logos:** `vendor/ai/` holds the Claude, ChatGPT (OpenAI) and Gemini logos, from orim, and the Copilot icon. See THIRD_PARTY_NOTICES.md.
 
 ## Screens and mockups
 
@@ -147,13 +148,13 @@ Every frame and screen is laid out on its own first, then placed in the flow as 
 
 ## Boards, templates and styles
 
-- **Boards:** click the board name next to Kiertotie, or **More → Boards…**, to see every board saved in this browser. From there you can make a new board, open, rename, duplicate or delete one. A new tab, and a link from the chat, open on the board you used last. Boards live in this browser only; a share link moves one to another computer.
-- **Templates:** the rail's grid button, **More → Templates…** or the start card. There are five architecture templates (Azure web app, event-driven orders, Power Platform, field inspections, analytics), an approval flowchart, and five workshop boards: retrospective, kanban, start/stop/continue, SWOT and brainstorm. An empty board takes the template; otherwise it opens as a new board.
-- **Board styles:** **More → Board style:** Classic, Pastel, Midnight, Blueprint and Sketch. Classic follows day and night; the others keep their own canvas colours. Pastel and Midnight give each top-level frame its own colour. The style is saved per board as `%% @theme <name>`.
+- **Boards:** the home button shows every board saved in this browser. From there you can make a new board, open, rename, duplicate or delete one, or clear the current one. A new tab, and a link from the chat, open on the board you used last. Boards live in this browser only; a share link moves one to another computer.
+- **Templates:** **Templates** in the top bar, the rail's grid button, or the landing page. The dialog shows each template as a thumbnail, drawn from the template itself, with categories and search. There are five architecture templates (Azure web app, event-driven orders, Power Platform, field inspections, analytics), an approval flowchart, and five workshop boards: retrospective, kanban, start/stop/continue, SWOT and brainstorm. An empty board takes the template; otherwise it opens as a new board.
+- **Board styles:** **Style:** Classic, Pastel, Midnight, Blueprint and Sketch. Classic follows day and night; the others keep their own canvas colours. Pastel and Midnight give each top-level frame its own colour. The style is saved per board as `%% @theme <name>`.
 
 ## Share and export
 
-**More** has these:
+**Export** has these:
 - **Share link and QR code:** a compressed `#z=` link that carries the whole diagram, including colours and boxes moved by hand, plus a QR code when the link is short enough. Nothing is uploaded.
 - **Download PNG** (at 2×) and **Download SVG:** the board with its current day or night colours written into the file.
 - **Copy as Mermaid:** the plain Mermaid source.
