@@ -224,7 +224,7 @@ function splitLines(text) {
 // keep: a diagram that replaces this one keeps the line routes the user picked, like their positions.
 // Undo and loading pass keep: false, since their text carries its own routes.
 function parseInto(text, { replace, keep = true }) {
-  const keptRoutes = new Map(keep ? state.edges.filter(e => e.route || e.color).map(e => [`${e.from}>${e.to}`, { route: e.route, color: e.color }]) : []);
+  const keptRoutes = new Map(keep ? state.edges.filter(e => e.route || e.color || e.fs || e.ts || e.bend).map(e => [`${e.from}>${e.to}`, { route: e.route, color: e.color, fs: e.fs, ts: e.ts, bend: e.bend }]) : []);
   // What the user added that Mermaid can't carry stays too: zones, table cells, doc text, images.
   const keptExtra = new Map(keep ? [...state.nodes.values(), ...state.groups.values()].filter(x => x.table || x.body || x.src || x.zone || x.dev).map(x => [x.id, { table: x.table, body: x.body, src: x.src, zone: x.zone, dev: x.dev, sent: x.sent }]) : []);
   // Pictures exist only on the board, so a whole new diagram from the assistant keeps them, like ink and comments.
@@ -260,7 +260,7 @@ function parseInto(text, { replace, keep = true }) {
     else if (spec.cls) n.cls = spec.cls;
   };
   const lastIn = new Map(), after = new Map();
-  const pendRoute = new Map(), pendColor = new Map(), pendExtra = new Map();
+  const pendRoute = new Map(), pendColor = new Map(), pendExtra = new Map(), pendEnds = new Map();
   const extra = (id, k, v) => (pendExtra.get(id) || pendExtra.set(id, {}).get(id))[k] = v;
   const addEdge = (from, to, label, style, arrow) => {
     const e = state.edges.find(x => x.from === from && x.to === to);
@@ -279,6 +279,11 @@ function parseInto(text, { replace, keep = true }) {
     // Mermaid front matter (---, title: …) carries nothing the board uses.
     if (line === '---' || /^title:\s/.test(line)) continue;
     if ((m = line.match(/^%%\s*@route\s+(\S+)\s+(\S+)\s+(curved|elbow|straight)\s*$/))) { pendRoute.set(`${m[1]}>${m[2]}`, m[3]); continue; }
+    // Which side a line leaves and enters (r l t b, or - for automatic), and how far its middle is pulled aside.
+    if ((m = line.match(/^%%\s*@ends\s+(\S+)\s+(\S+)\s+([rltb-])\s+([rltb-])(?:\s+(-?[\d.]+)\s+(-?[\d.]+))?\s*$/))) {
+      pendEnds.set(`${m[1]}>${m[2]}`, { fs: m[3] === '-' ? null : m[3], ts: m[4] === '-' ? null : m[4], bend: m[5] != null && (+m[5] || +m[6]) ? { x: +m[5], y: +m[6] } : null });
+      continue;
+    }
     if ((m = line.match(/^%%\s*@zone\s+(\S+)\s+(\w+)\s*$/))) { extra(m[1], 'zone', m[2]); continue; }
     if ((m = line.match(/^%%\s*@sent\s+(\S+)\s*$/))) { extra(m[1], 'sent', true); continue; }
     if ((m = line.match(/^%%\s*@device\s+(\S+)\s+(\w+)\s*$/))) { if (DEVICE_ALIAS[m[2].toLowerCase()]) extra(m[1], 'dev', DEVICE_ALIAS[m[2].toLowerCase()]); continue; }
@@ -389,6 +394,8 @@ function parseInto(text, { replace, keep = true }) {
     const k = `${e.from}>${e.to}`, r = pendRoute.get(k) || (!e.route && keptRoutes.get(k)?.route);
     if (r) { if (r === 'curved') delete e.route; else e.route = r; }
     if (!e.color && keptRoutes.get(k)?.color) e.color = keptRoutes.get(k).color;
+    const ends = pendEnds.get(k) || keptRoutes.get(k);
+    if (ends) for (const f of ['fs', 'ts', 'bend']) { if (ends[f] && !e[f]) e[f] = ends[f]; }
   }
   for (const [i, c] of pendColor) if (state.edges[i]) state.edges[i].color = c;
   if (after.size) {
@@ -489,6 +496,7 @@ function canvasLines({ images = true } = {}) {
     L.push(`%% @pos ${id} ${r(p.x)} ${r(p.y)}${p.w ? ` ${r(p.w)} ${r(p.h)}` : ''}`);
   }
   for (const e of state.edges) if (e.route) L.push(`%% @route ${e.from} ${e.to} ${e.route}`);
+  for (const e of state.edges) if (e.fs || e.ts || e.bend) L.push(`%% @ends ${e.from} ${e.to} ${e.fs || '-'} ${e.ts || '-'}${e.bend ? ` ${r(e.bend.x)} ${r(e.bend.y)}` : ''}`);
   if (state.theme) L.push(`%% @theme ${state.theme}`);
   for (const g of state.groups.values()) if (g.zone) L.push(`%% @zone ${g.id} ${g.zone}`);
   for (const n of state.nodes.values()) {
@@ -1177,6 +1185,20 @@ function nodeInner(n, b) {
 }
 
 // Where a line leaves a box: the middle of the side facing the other end.
+// A box's four sides: r l t b, each its middle point and the way it faces.
+const SIDES = { r: [1, 0], l: [-1, 0], b: [0, 1], t: [0, -1] };
+function sideAt(b, k) { const [nx, ny] = SIDES[k]; return { x: b.x + nx * b.w / 2, y: b.y + ny * b.h / 2, nx, ny }; }
+// The side of a box nearest a point; none in the middle of the box, so a drop there stays automatic.
+function nearSide(b, p) {
+  const dx = (p.x - b.x) / (b.w / 2 || 1), dy = (p.y - b.y) / (b.h / 2 || 1);
+  if (Math.abs(dx) < 0.45 && Math.abs(dy) < 0.45) return null;
+  return Math.abs(dx) >= Math.abs(dy) ? (dx > 0 ? 'r' : 'l') : (dy > 0 ? 'b' : 't');
+}
+// A curve leaving s and arriving at t the way their sides face, as the lines are drawn.
+function curveCtl(s, t) {
+  const k = Math.max(30, Math.min(140, Math.hypot(t.x - s.x, t.y - s.y) * 0.45));
+  return [{ x: s.x + s.nx * k, y: s.y + s.ny * k }, { x: t.x + t.nx * k, y: t.y + t.ny * k }];
+}
 function sideOf(b, toward, horiz) {
   const dx = toward.x - b.x, dy = toward.y - b.y;
   const h = horiz ?? Math.abs(dx) / (b.w / 2 || 1) >= Math.abs(dy) / (b.h / 2 || 1);
@@ -1259,36 +1281,47 @@ function edgeGeometry(e, a, b) {
     return { x: sc.x + dir * sc.w / 2, y: box.y, nx: dir, ny: 0 };
   };
   const sa = exitFrom(e.from, a, b), sb = exitFrom(e.to, b, a);
+  // Sides picked by hand (the dot a line was drawn from, or where an end was dropped) win over the automatic ones.
+  const fromSide = (other, horiz) => sa || (e.fs ? sideAt(a, e.fs) : sideOf(a, other, horiz));
+  const toSide = (other, horiz) => sb || (e.ts ? sideAt(b, e.ts) : sideOf(b, other, horiz));
   if (routeOf(e) === 'curved') {
-    const s = sa || sideOf(a, b), t = sb || sideOf(b, a);
+    const s = fromSide(e.ts ? sideAt(b, e.ts) : b), t = toSide(e.fs ? sideAt(a, e.fs) : a);
     // A line that also runs the other way keeps to its own side of the pair.
     if (state.edges.some(o => o.from === e.to && o.to === e.from)) {
       const k = e.from < e.to ? 7 : -7;
       for (const q of [s, t]) { if (q.nx) q.y += k; else q.x += k; }
     }
-    const k = Math.max(30, Math.min(140, Math.hypot(t.x - s.x, t.y - s.y) * 0.45));
-    const c1 = { x: s.x + s.nx * k, y: s.y + s.ny * k }, c2 = { x: t.x + t.nx * k, y: t.y + t.ny * k };
+    const [c1, c2] = curveCtl(s, t);
+    // The middle as drawn without a bend; a bend moves both handles, so the curve passes through middle + bend.
+    const mid0 = { x: (s.x + 3 * c1.x + 3 * c2.x + t.x) / 8, y: (s.y + 3 * c1.y + 3 * c2.y + t.y) / 8 };
+    if (e.bend) for (const c of [c1, c2]) { c.x += e.bend.x * 4 / 3; c.y += e.bend.y * 4 / 3; }
     const at = u => {
       const v = 1 - u;
       return { x: v ** 3 * s.x + 3 * v * v * u * c1.x + 3 * v * u * u * c2.x + u ** 3 * t.x, y: v ** 3 * s.y + 3 * v * v * u * c1.y + 3 * v * u * u * c2.y + u ** 3 * t.y };
     };
-    const around = detour(e, s, t, at);
-    if (around) return around;
-    return { d: `M${s.x},${s.y} C${c1.x},${c1.y} ${c2.x},${c2.y} ${t.x},${t.y}`, at, start: s };
+    const base = { mid0 };
+    const around = !e.bend && detour(e, s, t, at);
+    if (around) return { ...around, base, mid: around.at(0.5) };
+    return { d: `M${s.x},${s.y} C${c1.x},${c1.y} ${c2.x},${c2.y} ${t.x},${t.y}`, at, start: s, base, mid: at(0.5) };
   }
   if (e.route === 'elbow') {
-    const horiz = sa || sb ? true : Math.abs(b.x - a.x) >= Math.abs(b.y - a.y);
-    const s = sa || sideOf(a, b, horiz), t = sb || sideOf(b, a, horiz);
-    const pts = horiz ? [s, { x: (s.x + t.x) / 2, y: s.y }, { x: (s.x + t.x) / 2, y: t.y }, t]
-      : [s, { x: s.x, y: (s.y + t.y) / 2 }, { x: t.x, y: (s.y + t.y) / 2 }, t];
-    return { d: `M${pts.map(p => `${p.x},${p.y}`).join(' L')}`, at: alongPolyline(pts), start: s };
+    const auto = sa || sb ? true : Math.abs(b.x - a.x) >= Math.abs(b.y - a.y);
+    const s = fromSide(b, e.fs ? undefined : e.ts ? SIDES[e.ts][0] !== 0 : auto);
+    const t = toSide(a, e.ts ? undefined : s.nx !== 0);
+    // Both ends sideways: across, along a middle that can be moved left or right; both up or down: the same, turned.
+    // One of each: a single corner.
+    let pts, base = null, mid = null;
+    if (s.nx && t.nx) { const mx0 = (s.x + t.x) / 2, mx = mx0 + (e.bend?.x || 0); pts = [s, { x: mx, y: s.y }, { x: mx, y: t.y }, t]; base = { h: true, mx0 }; mid = { x: mx, y: (s.y + t.y) / 2 }; }
+    else if (s.ny && t.ny) { const my0 = (s.y + t.y) / 2, my = my0 + (e.bend?.y || 0); pts = [s, { x: s.x, y: my }, { x: t.x, y: my }, t]; base = { h: false, my0 }; mid = { x: (s.x + t.x) / 2, y: my }; }
+    else pts = s.nx ? [s, { x: t.x, y: s.y }, t] : [s, { x: s.x, y: t.y }, t];
+    return { d: `M${pts.map(p => `${p.x},${p.y}`).join(' L')}`, at: alongPolyline(pts), start: s, base, mid };
   }
   // straight; a link that also runs the other way bends to its own side, so the pair doesn't overlap
   const len = Math.hypot(b.x - a.x, b.y - a.y) || 1;
   const nx = -(b.y - a.y) / len, ny = (b.x - a.x) / len;
   const bulge = state.edges.some(o => o.from === e.to && o.to === e.from) ? 34 : 0;
   const c = { x: (a.x + b.x) / 2 + nx * bulge, y: (a.y + b.y) / 2 + ny * bulge };
-  const s = sa || clip(a, c.x, c.y), t = sb || clip(b, c.x, c.y);
+  const s = sa || (e.fs ? sideAt(a, e.fs) : clip(a, c.x, c.y)), t = sb || (e.ts ? sideAt(b, e.ts) : clip(b, c.x, c.y));
   const at = u => ({ x: (1 - u) ** 2 * s.x + 2 * (1 - u) * u * c.x + u * u * t.x, y: (1 - u) ** 2 * s.y + 2 * (1 - u) * u * c.y + u * u * t.y });
   return { d: bulge ? `M${s.x},${s.y} Q${c.x},${c.y} ${t.x},${t.y}` : `M${s.x},${s.y} L${t.x},${t.y}`, at, start: s };
 }
@@ -1360,10 +1393,12 @@ function render() {
     taken.push({ x0, x1: x0 + textWidth(state.groups.get(gid).title, 12.5, 600) + 24, y0: y0 - FRAME_TITLE, y1: y0 });
     if (deviceOf(gid)) taken.push({ x0, x1: x0 + b.w, y0, y1: y0 + b.h });
   }
+  edgeGeo = new Map();
   state.edges.forEach((e, i) => {
     const a = anchorBox(e.from), b = anchorBox(e.to);
     if (!a || !b) return;
-    const { d, at } = edgeGeometry(e, a, b);
+    const geo = edgeGeometry(e, a, b), { d, at } = geo;
+    edgeGeo.set(i, geo);
     const on = isSel(`e:${i}`);
     const marker = e.arrow ? ` marker-end="url(#${on ? 'arrow-sel' : arrowFor(e.color)})"` : '';
     let label = '';
@@ -1387,7 +1422,8 @@ function render() {
     }
     // A dotted line without a head to or from a note is an annotation: thin and grey.
     const noteLink = !e.arrow && [e.from, e.to].some(id => state.nodes.get(id)?.shape === 'sticky');
-    html += `<g class="edge ${e.style}${on ? ' sel' : ''}${noteLink ? ' note-link' : ''}" data-edge="${i}"${e.color ? ` style="--ec:${esc(e.color)}"` : ''}><path class="hit" d="${d}"/><path class="line" d="${d}"${marker}/>${label}</g>`;
+    const moving = drag?.kind === 'reend' && drag.i === i;
+    html += `<g class="edge ${e.style}${on ? ' sel' : ''}${noteLink ? ' note-link' : ''}${moving ? ' reending' : ''}" data-edge="${i}"${e.color ? ` style="--ec:${esc(e.color)}"` : ''}><path class="hit" d="${d}"/><path class="line" d="${d}"${marker}/>${label}</g>`;
   });
   html += state.ink.filter(k => k.kind === 'hl').map(inkSvg).join('');
   // Pictures go first of all, under the frames and lines too, so they sit behind the diagram drawn from them.
@@ -1410,10 +1446,15 @@ function render() {
     html += `<rect class="marquee" x="${x}" y="${y}" width="${Math.abs(drag.x1 - drag.x0)}" height="${Math.abs(drag.y1 - drag.y0)}"/>`;
   }
   if (drag?.kind === 'connect' && drag.to) {
-    // Over a box, the line snaps to its side.
+    // The line as it will come out: curved, from the dot's side; over a box it snaps to the side nearest the pointer.
     const a = boxes.get(drag.from), tb = drag.target && anchorBox(drag.target);
-    const end = tb ? sideOf(tb, a) : drag.to, s = sideOf(a, tb || drag.to);
-    html += `<path class="ghost${tb ? ' snapped' : ''}" d="M${s.x},${s.y} L${end.x},${end.y}"/>`;
+    const s = drag.side ? sideAt(a, drag.side) : sideOf(a, tb || drag.to);
+    html += ghostSvg(s, tb, drag.to);
+  }
+  if (drag?.kind === 'reend' && drag.to) {
+    // Moving one end of a line: from the end that stays to the pointer, snapping to a box's side.
+    const g = edgeGeo.get(drag.i), tb = drag.target && anchorBox(drag.target);
+    if (g) { const q = g.at(drag.end === 'from' ? 1 : 0); html += ghostSvg({ x: q.x, y: q.y, nx: 0, ny: 0 }, tb, drag.to); }
   }
   vp.innerHTML = pics + html;
   paintInkCursor();
@@ -1479,10 +1520,26 @@ function commentSvg(c, i) {
     `<g class="ctext"><rect x="18" y="-14" width="${w}" height="${h}" rx="8"/><text>${lines.map((l, j) => `<tspan x="28" y="${-14 + 15 + j * 16}" dominant-baseline="central">${esc(l)}</tspan>`).join('')}</text></g></g>`;
 }
 
+// The dashed line while drawing or moving a line, to the pointer or to the side of the box under it.
+function ghostSvg(s, tb, p) {
+  const ns = tb && nearSide(tb, p), t = tb ? (ns ? sideAt(tb, ns) : sideOf(tb, s)) : { x: p.x, y: p.y, nx: 0, ny: 0 };
+  const [c1, c2] = curveCtl(s, t);
+  const dot = tb && ns ? `<circle class="ghost-end" cx="${t.x}" cy="${t.y}" r="${4.5 / view.k}"/>` : '';
+  return `<path class="ghost${tb ? ' snapped' : ''}" d="M${s.x},${s.y} C${c1.x},${c1.y} ${c2.x},${c2.y} ${t.x},${t.y}"/>${dot}`;
+}
+let edgeGeo = new Map();
 // The selected box gets four dots to drag a line from and a corner to resize it; a frame gets the corner.
+// A selected line gets its two ends, to move to another box or side, and its middle, to bend it.
 function handlesSvg() {
-  if (!sel || sel.type === 'edge' || drag?.moved) return '';
+  if (!sel || drag?.moved) return '';
   const k = view.k, r = 5.5 / k, off = 14 / k, hs = 9 / k;
+  if (sel.type === 'edge') {
+    const g = edgeGeo.get(sel.i); if (!g || drag?.kind === 'reend' || markMode) return '';
+    const s = g.at(0), t = g.at(1);
+    let out = [['from', s], ['to', t]].map(([end, q]) => `<circle class="eend" data-eend="${end}" cx="${q.x}" cy="${q.y}" r="${6 / k}"><title>Drag to another box or side</title></circle>`).join('');
+    if (g.mid) out += `<circle class="emid" data-emid cx="${g.mid.x}" cy="${g.mid.y}" r="${5 / k}"><title>Drag to bend the line</title></circle>`;
+    return out;
+  }
   // Several items, ink or a comment: a dashed outline around them.
   if (sel.type === 'multi' || sel.type === 'ink' || sel.type === 'comment') {
     const b = keysBox(selKeys()); if (!b) return '';
@@ -1493,8 +1550,8 @@ function handlesSvg() {
   if (!b) return '';
   let out = '';
   if (sel.type === 'node' && !markMode) {
-    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]])
-      out += `<circle class="port" data-port="${esc(sel.id)}" cx="${b.x + dx * (b.w / 2 + off)}" cy="${b.y + dy * (b.h / 2 + off)}" r="${r}"/>`;
+    for (const [side, [dx, dy]] of Object.entries(SIDES))
+      out += `<circle class="port" data-port="${esc(sel.id)}" data-side="${side}" cx="${b.x + dx * (b.w / 2 + off)}" cy="${b.y + dy * (b.h / 2 + off)}" r="${r}"/>`;
   }
   const inScreen = sel.type === 'node' && deviceOf(state.nodes.get(sel.id)?.group);
   if (!(sel.type === 'node' && state.nodes.get(sel.id)?.shape === 'icon') && !inScreen)
@@ -1914,7 +1971,12 @@ svg.addEventListener('pointerdown', e => {
   closeEditor(true);
   const p = toWorld(e);
   const portEl = e.target.closest('[data-port]'), sizeEl = e.target.closest('[data-resize]');
-  if (portEl) { drag = { kind: 'connect', from: portEl.dataset.port, to: p }; svg.setPointerCapture(e.pointerId); return; }
+  if (portEl) { drag = { kind: 'connect', from: portEl.dataset.port, side: portEl.dataset.side, to: p }; svg.setPointerCapture(e.pointerId); return; }
+  const endEl = e.target.closest('[data-eend]'), midEl = e.target.closest('[data-emid]');
+  if ((endEl || midEl) && sel?.type === 'edge') {
+    drag = endEl ? { kind: 'reend', i: sel.i, end: endEl.dataset.eend, snap: snapshot() } : { kind: 'bend', i: sel.i, snap: snapshot(), moved: false };
+    svg.setPointerCapture(e.pointerId); return;
+  }
   if (sizeEl) {
     const [type, ...rest] = sizeEl.dataset.resize.split(':'), id = rest.join(':');
     const b = type === 'node' ? boxes.get(id) : groupBoxes.get(id);
@@ -2028,6 +2090,17 @@ svg.addEventListener('pointermove', e => {
   if (drag.kind === 'pan') { view.x = drag.vx + e.clientX - drag.sx; view.y = drag.vy + e.clientY - drag.sy; moveView(); return; }
   const p = toWorld(e);
   if (drag.kind === 'connect') { drag.to = p; drag.target = connectTarget(p, drag.from); render(); return; }
+  if (drag.kind === 'reend') {
+    const ed = state.edges[drag.i];
+    drag.to = p; drag.target = connectTarget(p, drag.end === 'from' ? ed.to : ed.from); render(); return;
+  }
+  if (drag.kind === 'bend') {
+    const ed = state.edges[drag.i], g = edgeGeo.get(drag.i); if (!ed || !g?.base) return;
+    const b = g.base.mid0 ? { x: p.x - g.base.mid0.x, y: p.y - g.base.mid0.y } : g.base.h ? { x: p.x - g.base.mx0, y: 0 } : { x: 0, y: p.y - g.base.my0 };
+    // Back near the plain line, it lets go of the bend.
+    if (Math.hypot(b.x, b.y) * view.k < 6) delete ed.bend; else ed.bend = b;
+    drag.moved = true; render(); return;
+  }
   if (drag.kind === 'erase') { eraseAlong(e); return; }
   if (drag.kind === 'ink') {
     const k = drag.ink;
@@ -2113,18 +2186,32 @@ svg.addEventListener('pointerup', e => {
     if (k.kind === 'arrow') { setTool('select'); select({ type: 'ink', id: k.id }); }
     return;
   }
+  if (d.kind === 'bend') { if (d.moved) { pushUndo(d.snap); commit('board', 'Bent the line'); } return; }
+  if (d.kind === 'reend') {
+    const ed = state.edges[d.i], fixed = d.end === 'from' ? ed?.to : ed?.from, to = ed && d.to && connectTarget(d.to, fixed);
+    if (!to) { render(); return; }
+    const [f, t2] = d.end === 'from' ? [to, ed.to] : [ed.from, to];
+    if (to !== ed[d.end] && state.edges.some(x => x !== ed && x.from === f && x.to === t2)) { toast('Those two are linked already'); render(); return; }
+    pushUndo(d.snap); pinAll();
+    const side = nearSide(anchorBox(to), d.to), key = d.end === 'from' ? 'fs' : 'ts';
+    ed[d.end] = to;
+    if (side) ed[key] = side; else delete ed[key];
+    commit('board', `Moved the line's ${d.end === 'from' ? 'start' : 'end'} to ${to}${side ? ` (${{ r: 'right', l: 'left', t: 'top', b: 'bottom' }[side]} side)` : ''}`);
+    return;
+  }
   if (d.kind === 'connect') {
     const to = d.to && connectTarget(d.to, d.from);
     if (to && to !== d.from) {
       pushUndo(); pinAll();
-      if (!state.edges.some(x => x.from === d.from && x.to === to)) state.edges.push({ from: d.from, to, label: '', style: 'solid', arrow: true });
+      const ts = nearSide(anchorBox(to), d.to);
+      if (!state.edges.some(x => x.from === d.from && x.to === to)) state.edges.push({ from: d.from, to, label: '', style: 'solid', arrow: true, ...(d.side && { fs: d.side }), ...(ts && { ts }) });
       commit('board', `Linked ${d.from} → ${to}`);
     } else if (!to && d.to && Math.hypot(d.to.x - boxes.get(d.from).x, d.to.y - boxes.get(d.from).y) > 60) {
       // Dropped on empty board: a new box of the same kind, linked, ready to type in.
       const from = state.nodes.get(d.from);
       const shape = ['icon', 'text', 'image', 'table', 'doc', 'phone', 'browser'].includes(from.shape) ? 'box' : from.shape;
       const id = placeItem(shape === 'sticky' ? 'sticky' : 'shape', d.to, { shape, edit: false, quiet: true });
-      state.edges.push({ from: d.from, to: id, label: '', style: 'solid', arrow: true });
+      state.edges.push({ from: d.from, to: id, label: '', style: 'solid', arrow: true, ...(d.side && { fs: d.side }) });
       commit('board', `Added ${id}, linked from ${d.from}`);
       openEditor({ type: 'node', id });
     } else render();
@@ -2571,6 +2658,9 @@ onDoc('paste', e => {
   }
   if (typing(e.target)) return;
   const text = e.clipboardData?.getData('text/plain') || '';
+  // A reply copied from the chat, with its Open in Kiertotie link: for when the link can't be clicked.
+  const linked = /#((?:note|m|z)=[^\s)\]>"']+)/.exec(text), link = linked && parseHash(linked[1]);
+  if (link) { e.preventDefault(); applyLink(link); return; }
   // What Kiertotie itself copied: paste the items, not the Mermaid.
   const clip = readClip();
   if (clip && text && text === clip.text) { e.preventDefault(); pasteClip(clip); return; }
@@ -3029,7 +3119,7 @@ const SHAPE_NAMES = [['box', 'Box'], ['round', 'Rounded'], ['stadium', 'Pill'], 
 const ICON_SVG = {
   straight: '<path d="M3 13 L13 3"/>', curved: '<path d="M3 13 C3 6, 13 10, 13 3"/>', elbow: '<path d="M3 13 H8 V3 H13"/>',
   solid: '<path d="M2 8 H14"/>', dotted: '<path d="M2 8 H14" stroke-dasharray="2.5 2"/>', thick: '<path d="M2 8 H14" stroke-width="3.2"/>',
-  arrow: '<path d="M2 8 H13 M9 4 L13 8 L9 12"/>', trash: '<path d="M3 4.5 H13 M6 4.5 V3 H10 V4.5 M4.5 4.5 L5.2 13 H10.8 L11.5 4.5"/>',
+  arrow: '<path d="M2 8 H13 M9 4 L13 8 L9 12"/>', reset: '<path d="M3.5 8 A4.5 4.5 0 1 0 5 4.6 M3.5 2.5 V5.5 H6.5"/>', trash: '<path d="M3 4.5 H13 M6 4.5 V3 H10 V4.5 M4.5 4.5 L5.2 13 H10.8 L11.5 4.5"/>',
   mark: '<path d="M3 13 L5 11 L11 5 L13 7 L7 13 Z M10 4 L12 2 L14 4 L12 6"/>',
   'al-left': '<path d="M2.5 2 V14 M5 5 H13 M5 11 H9"/>', 'al-center': '<path d="M8 2 V14 M3 5 H13 M5 11 H11"/>', 'al-right': '<path d="M13.5 2 V14 M3 5 H11 M7 11 H11"/>',
   'al-top': '<path d="M2 2.5 H14 M5 5 V13 M11 5 V9"/>', 'al-middle': '<path d="M2 8 H14 M5 3 V13 M11 5 V11"/>', 'al-bottom': '<path d="M2 13.5 H14 M5 3 V11 M11 7 V11"/>',
@@ -3056,7 +3146,7 @@ function setFontSize(items, v) {
 
 function renderCtx() {
   const el = $('#ctx'); if (!el) return;
-  const hide = !sel || drag?.moved || drag?.kind === 'connect' || drag?.kind === 'marquee' || editor || markMode;
+  const hide = !sel || drag?.moved || drag?.kind === 'connect' || drag?.kind === 'reend' || drag?.kind === 'marquee' || editor || markMode;
   if (hide) { el.hidden = true; ctxKey = ''; return; }
   let html, b;
   const del = `<button data-del title="Delete (Del)">${glyph('trash')}</button>`;
@@ -3064,14 +3154,18 @@ function renderCtx() {
   if (sel.type === 'edge') {
     const e = state.edges[sel.i]; if (!e) { el.hidden = true; return; }
     const a = anchorBox(e.from), c = anchorBox(e.to); if (!a || !c) { el.hidden = true; return; }
-    const mid = edgeGeometry(e, a, c).at(0.5);
-    b = { x: mid.x, y: mid.y, w: 0, h: 0 };
+    // Above the whole line and the boxes it joins, so the toolbar never covers them or the line's handles.
+    const at = (edgeGeo.get(sel.i) || edgeGeometry(e, a, c)).at, ps = [...Array(21)].map((_, i) => at(i / 20));
+    const xs = ps.map(q => q.x), x0 = Math.min(...xs), x1 = Math.max(...xs);
+    const y0 = Math.min(...ps.map(q => q.y), a.y - a.h / 2, c.y - c.h / 2) - 8 / view.k, y1 = Math.max(...ps.map(q => q.y), a.y + a.h / 2, c.y + c.h / 2) + 8 / view.k;
+    b = { x: (x0 + x1) / 2, y: (y0 + y1) / 2, w: x1 - x0, h: y1 - y0 };
     const route = routeOf(e);
     html = `<select data-line-type title="Line type"><option value="">Line type…</option>${Object.entries(LINE_TYPES).map(([k, t]) => `<option value="${k}">${t.name}</option>`).join('')}</select><span class="ctx-sep"></span>` +
       ['straight', 'curved', 'elbow'].map(r => `<button data-route="${r}" aria-pressed="${route === r}" title="${r[0].toUpperCase() + r.slice(1)} line">${glyph(r)}</button>`).join('') +
       '<span class="ctx-sep"></span>' +
       ['solid', 'dotted', 'thick'].map(s => `<button data-estyle="${s}" aria-pressed="${e.style === s}" title="${s[0].toUpperCase() + s.slice(1)}">${glyph(s)}</button>`).join('') +
-      `<button data-arrow aria-pressed="${e.arrow}" title="Arrow head">${glyph('arrow')}</button><span class="ctx-sep"></span>` +
+      `<button data-arrow aria-pressed="${e.arrow}" title="Arrow head">${glyph('arrow')}</button>` +
+      (e.fs || e.ts || e.bend ? `<button data-ereset title="Back to automatic sides, no bend">${glyph('reset')}</button>` : '') + '<span class="ctx-sep"></span>' +
       sw(EDGE_COLORS, Math.max(0, EDGE_COLORS.findIndex(x => x.fill === e.color)), 'data-ecolor', 'var(--edge)') +
       `<span class="ctx-sep"></span>${del}`;
   } else if (sel.type === 'ink') {
@@ -3177,6 +3271,7 @@ function ctxClick(e) {
   if (t.dataset.route) { if (t.dataset.route === 'curved') delete item.route; else item.route = t.dataset.route; }
   if (t.dataset.estyle) item.style = t.dataset.estyle;
   if (t.dataset.arrow != null) item.arrow = !item.arrow;
+  if (t.dataset.ereset != null) { delete item.fs; delete item.ts; delete item.bend; }
   if (t.dataset.ecolor != null) { const c = EDGE_COLORS[+t.dataset.ecolor].fill; if (c) item.color = c; else delete item.color; }
   commit('board', `Changed link ${item.from} → ${item.to}`);
 }
@@ -3461,11 +3556,15 @@ async function readHash() {
   const link = parseHash(location.hash.slice(1));
   if (!link) return;
   history.replaceState(null, '', BASE);
+  applyLink(link, { handoff: true });
+}
+// A link from the chat, clicked (handoff: a floating board may take it) or pasted onto the board.
+async function applyLink(link, { handoff = false } = {}) {
   if (link.z) {
     try { link.text = await unzipText(link.z); }
     catch { showNote('', ['The shared link is damaged']); return; }
   }
-  if (!pipWin && await handOff(link)) return;
+  if (handoff && !pipWin && await handOff(link)) return;
   const r = applyText(link.text, 'link');
   showHome(false);
   showNote(link.note, r.warnings || [], r.mergeOffer, r.message);
@@ -3477,6 +3576,9 @@ async function readHash() {
 // A tab opened from the assistant's link: Done closes it and the browser returns to the chat.
 // Browsers let a page close a tab that a link opened, but not bring another tab to the front.
 const openedByLink = /^#(m|note|z)=/.test(location.hash);
+// Chat apps only make http(s) links clickable, so a board opened as a file gets links nobody can click.
+const fileMode = location.protocol === 'file:';
+const FILE_WARN = 'This board is open as a file, so the chat\'s links to it won\'t be clickable. Copy the reply with the chat\'s copy button and paste it on the board, or use jussikauhanen.github.io/kiertotie.';
 const key = /Mac/.test(navigator.platform) ? '⌘' : 'Ctrl+';
 
 // ---------- pictures for the chat ----------
@@ -4259,7 +4361,7 @@ function startLoop(fromChat = null) {
   pushChat({ who: 'me', kind: 'start', text: req || 'Draw with me on this board.', pics: pics.length });
   copying.then(ok => {
     pushChat({ who: 'sys', kind: ok ? 'start' : 'failed', one, pics: pics.length });
-    toast(!ok ? 'Copying failed: use Copy the instructions again.' : `Instructions copied. In ${ai().short}, press ${key}V and send.`, 5000);
+    toast(!ok ? 'Copying failed: use Copy the instructions again.' : fileMode ? FILE_WARN : `Instructions copied. In ${ai().short}, press ${key}V and send.`, fileMode ? 10000 : 5000);
   });
   return floating;
 }
@@ -4526,4 +4628,5 @@ const SAMPLE = `flowchart LR
   // Home first when there is nothing on this board yet; a link from the chat goes straight to the board.
   if (!/^#(m|note|z)=/.test(location.hash) && !state.nodes.size && !state.groups.size && !thread().length) showHome(true);
   readHash();
+  if (fileMode) setTimeout(() => toast(FILE_WARN, 9000), 800);
 })();

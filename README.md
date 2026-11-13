@@ -31,7 +31,8 @@ Keep the Kiertotie tab open (in the background is fine), because closing it clos
 
 - The link is `#note=<the assistant's line>&m=<the whole diagram as Mermaid>`, percent-encoded, with `;` between lines. The assistant always sends the whole diagram. Boxes you moved by hand keep their place if they're still in it.
 - A shape that's missing its closing bracket at the end of the link is still read, because chat apps often cut a trailing `]` or `)` off a link.
-- If a link comes out broken, paste the diagram text anywhere on the board instead.
+- If a link comes out broken or can't be clicked, copy the assistant's reply (its copy button) and paste it anywhere on the board: the board reads the link inside it. Pasting the diagram text works too.
+- Open the board from its web address (GitHub Pages, or a local server such as `python3 -m http.server`), not as a file: chat apps don't make `file://` links clickable.
 - The diagram is kept in the browser. Open board tabs update each other live. An empty board isn't kept: it shows nowhere, and once you leave it, it's gone.
 - The **zoom bar** at the bottom right has **Tidy up** (with the flow steps), zoom out and in, the zoom level (click for 100%) and fit. **Import → Edit the Mermaid source** shows the code and a log of changes. **Clear the board** is in the Tidy up menu.
 
@@ -46,7 +47,9 @@ Select something to get its toolbar:
 - **Boxes and frames:** colour, shape, highlight and delete.
 - **Lines:** straight, curved or elbow, solid, dotted or thick, and the arrow head.
 
-A selected box has four dots: drag one onto another box to link them, or onto empty board for a new linked box. The box the line would land on lights up and the line snaps to it, also when you let go just short of its edge. The corner square resizes boxes and frames.
+A selected box has four dots: drag one onto another box to link them, or onto empty board for a new linked box. The box the line would land on lights up and the line snaps to it, also when you let go just short of its edge. The line leaves from the side of the dot you dragged, and arrives at the side of the other box you let go nearest (in the middle of the box, the side is picked for you); the preview curves the way the line will.
+
+A selected line has a dot at each end: drag one to another box, or to another side of the same box. A curved line has a dot in the middle: drag it to bend the line; an elbow line's middle dot moves its middle part. Back near the plain line, the bend lets go. The toolbar's ↺ puts the sides back to automatic and removes the bend. Sides and bends are saved as `%% @ends a b r l 40 -20` canvas lines. The corner square resizes boxes and frames.
 
 **Text size:** the toolbar over a selected box, sticky note or text has a size picker. **Auto** (the default) is Miro-like: a resized box or text scales its text to fill it, and a sticky note writes short notes big and long ones small; the picker shows the size it comes to. A size of your own is saved as a normal Mermaid line, `style a font-size:18px`, and draw.io exports keep it.
 

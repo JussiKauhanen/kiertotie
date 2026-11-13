@@ -351,6 +351,13 @@ body.floating .icon-pop { width: calc(100% - 64px); }
 .port { fill: var(--surface); stroke: var(--accent); stroke-width: 1.6; cursor: crosshair; vector-effect: non-scaling-stroke; }
 .port:hover { fill: var(--accent); }
 .handle { fill: var(--surface); stroke: var(--accent); stroke-width: 1.6; cursor: nwse-resize; vector-effect: non-scaling-stroke; }
+/* A selected line: its ends move to another box or side, its middle bends it. */
+.eend { fill: var(--surface); stroke: var(--accent); stroke-width: 2; cursor: grab; vector-effect: non-scaling-stroke; }
+.eend:hover { fill: var(--accent); }
+.emid { fill: var(--accent); stroke: var(--surface); stroke-width: 2; cursor: move; vector-effect: non-scaling-stroke; }
+.emid:hover { transform-box: fill-box; transform-origin: center; transform: scale(1.25); }
+.ghost-end { fill: var(--accent); pointer-events: none; }
+.edge.reending { opacity: .3; }
 .edge path.line { stroke-linejoin: round; }
 .icon-pop { top: 62px; }
 body.floating .icon-pop { top: 52px; bottom: 6px; }
