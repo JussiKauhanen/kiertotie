@@ -423,7 +423,13 @@ function parseInto(text, { replace, keep = true }) {
   }
 
   for (const n of keptPics) if (!state.nodes.has(n.id)) state.nodes.set(n.id, { ...n, group: state.groups.has(n.group) ? n.group : null });
-  for (const [k, v] of [...keptProps, ...pendProps]) { const x = itemOf(k); if (x && v && typeof v === 'object') x.props = { ...v }; }
+  for (const [k, v] of [...keptProps, ...pendProps]) {
+    const x = itemOf(k); if (!x || !v || typeof v !== 'object') continue;
+    x.props = { ...v };
+    // Stickers saved as counts by an earlier version become stickers.
+    if (v.st && !v.stk) { x.props.stk = Object.entries(v.st).flatMap(([e, c]) => Array.from({ length: c }, () => ({ e }))); delete x.props.st; }
+    if (x.props.stk) x.props.stk = x.props.stk.map(t => ({ ...t, e: stkKey(t.e) }));
+  }
   for (const n of state.nodes.values()) if (n.shape === 'table' && n.label.includes('|')) tableFromLabel(n);
   // An implicit node with a group's id is a link to that group, not a box.
   for (const [id, n] of state.nodes) if (n.implicit && state.groups.has(id)) state.nodes.delete(id);
@@ -1125,23 +1131,91 @@ function runsSvg(l) {
   }).join('');
 }
 
-// Stickers: emoji on a box that count, so a board can vote. Click one to add a vote, Alt-click to take one off.
-const STICKERS = ['👍', '❤️', '🎉', '⭐', '✅', '❓', '🔥', '👀'];
-function stickersSvg(n, b) {
-  const st = Object.entries(P(n, 'st') || {}).filter(([, c]) => c > 0); if (!st.length) return '';
-  const hgt = 22, gap = 4, ws = st.map(([e, c]) => 30 + (c > 1 ? textWidth(String(c), 11.5, 600) + 4 : 0));
-  let x = b.x + b.w / 2 - ws.reduce((a, w) => a + w + gap, -gap) + 8;
-  const y = b.y - b.h / 2 - hgt / 2 - 2;
-  return st.map(([e, c], i) => {
-    const w = ws[i], g = `<g class="sticker" data-sticker="${esc(n.id)}" data-emoji="${esc(e)}"><title>${c} · click to add one, Alt-click to take one off</title>` +
-      `<rect x="${x}" y="${y - hgt / 2}" width="${w}" height="${hgt}" rx="${hgt / 2}"/><text x="${x + 15}" y="${y + 1}" text-anchor="middle" dominant-baseline="central" class="st-e">${e}</text>` +
-      (c > 1 ? `<text x="${x + 28}" y="${y + 1}" dominant-baseline="central" class="st-n">${c}</text>` : '') + '</g>';
-    x += w + gap; return g;
+// Stickers drawn for the board, in the Claude whiteboard's marker look: a pastel patch, its mid-tone at .3 on
+// the side away from the light, and an ink contour over it. Each is drawn on a 48 × 48 square.
+const STK_INK = '#2b2a27';
+const PASTEL = { blue: '#9CCDE8', peach: '#F6BD78', yellow: '#F7DD72', green: '#B7DFA4', purple: '#CDB6EC', grey: '#D1D1D1', pink: '#F4AFC2' };
+const MID = { blue: '#2F7CC4', peach: '#D97757', yellow: '#D97757', green: '#2E8B57', purple: '#7C5CBF', grey: '#878787', pink: '#C2255C' };
+const pen = (w = 2.4) => `fill="none" stroke="${STK_INK}" stroke-width="${w}" stroke-linecap="round" stroke-linejoin="round"`;
+// A body: colour, then the shading, then the pen.
+const patch = (d, c, shade = '') => `<path d="${d}" fill="${PASTEL[c]}"/>${shade ? `<path d="${shade}" fill="${MID[c]}" opacity=".3"/>` : ''}<path d="${d}" ${pen()}/>`;
+const FACE = 'M24 5.5 C34.5 5.2 42.6 13 42.5 24.3 C42.4 35.2 34.4 42.7 23.6 42.5 C12.8 42.3 5.4 34.6 5.5 23.8 C5.6 13.2 13.4 5.8 24 5.5 Z';
+const FACE_SHADE = 'M41.6 27 C40.4 36.2 33 42.1 23.8 42 C18.8 42 14.6 40.2 11.6 37.2 C23.4 40.6 37.2 37 41.6 27 Z';
+const stkDot = (x, y, r = 1.9) => `<circle cx="${x}" cy="${y}" r="${r}" fill="${STK_INK}"/>`;
+const starPath = (cx, cy, R, r) => 'M' + [...Array(10)].map((_, i) => { const a = -Math.PI / 2 + i * Math.PI / 5, q = i % 2 ? r : R; return `${(cx + Math.cos(a) * q).toFixed(1)} ${(cy + Math.sin(a) * q).toFixed(1)}`; }).join(' L') + ' Z';
+const STICKER_SET = [
+  { k: 'plus1', name: '+1', svg: patch('M24 5.5 C34.5 5.2 42.6 13 42.5 24.3 C42.4 35.2 34.4 42.7 23.6 42.5 C12.8 42.3 5.4 34.6 5.5 23.8 C5.6 13.2 13.4 5.8 24 5.5 Z', 'blue', FACE_SHADE) +
+      `<path d="M11.5 24.5 H22 M16.75 19.2 V29.8" ${pen(3.2)}/><path d="M27.6 19.6 L31.8 16.4 V32.4 M27.8 32.4 H35.8" ${pen(3.2)}/>` },
+  { k: 'check', name: 'yes', svg: patch(FACE, 'green', FACE_SHADE) + `<path d="M14.5 24.8 L21.4 31.6 L34 17.2" ${pen(3.6)}/>` },
+  { k: 'heart', name: 'love', svg: patch('M24 40.5 C14 33.4 6.4 26.2 6.4 17.6 C6.4 11.6 10.9 7.4 16 7.4 C19.6 7.4 22.6 9.4 24 12.6 C25.4 9.4 28.4 7.4 32 7.4 C37.1 7.4 41.6 11.6 41.6 17.6 C41.6 26.2 34 33.4 24 40.5 Z', 'pink',
+      'M41.4 19 C40.6 27.4 33.6 34 24 40.5 C29.4 34.6 36.6 28.6 41.4 19 Z') + `<path d="M12.2 15.6 C12.6 13.2 14.4 11.6 16.6 11.4" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" opacity=".9"/>` },
+  { k: 'star', name: 'star', svg: patch(starPath(24, 25.2, 19.5, 8.4), 'yellow', 'M24 33.6 L35.4 40.9 L32.1 28.3 L42.5 19.2 L31 19.9 Z') },
+  { k: 'happy', name: 'happy', svg: patch(FACE, 'yellow', FACE_SHADE) + `<circle cx="13.2" cy="27.6" r="3.2" fill="${MID.peach}" opacity=".35"/><circle cx="34.8" cy="27.6" r="3.2" fill="${MID.peach}" opacity=".35"/>` +
+      `<ellipse cx="17.6" cy="20" rx="1.9" ry="2.7" fill="${STK_INK}"/><ellipse cx="30.4" cy="20" rx="1.9" ry="2.7" fill="${STK_INK}"/><path d="M15.4 27.4 C18.6 33.6 29.4 33.6 32.6 27.4" ${pen(2.6)}/>` },
+  { k: 'wow', name: 'wow', svg: patch(FACE, 'yellow', FACE_SHADE) + `<path d="M13.6 14.6 C15.4 12.4 18.6 12 20.6 13.4 M27.4 13.4 C29.4 12 32.6 12.4 34.4 14.6" ${pen(2)}/>` +
+      `<circle cx="17.6" cy="20.4" r="3" fill="#fff" stroke="${STK_INK}" stroke-width="1.8"/><circle cx="30.4" cy="20.4" r="3" fill="#fff" stroke="${STK_INK}" stroke-width="1.8"/>${stkDot(17.9, 20.8, 1.3)}${stkDot(30.7, 20.8, 1.3)}` +
+      `<ellipse cx="24" cy="31.2" rx="3.6" ry="4.6" fill="${MID.peach}" opacity=".55"/><ellipse cx="24" cy="31.2" rx="3.6" ry="4.6" ${pen(2.2)}/>` },
+  { k: 'hmm', name: 'not sure', svg: patch(FACE, 'yellow', FACE_SHADE) + `<path d="M13.4 15.4 C15.6 12.8 19 12.6 21.2 14 M27.2 16.6 H34" ${pen(2)}/>${stkDot(17.6, 20.6, 2)}${stkDot(30.6, 21.2, 2)}` +
+      `<path d="M16.6 30.6 C19.6 29 22.6 32.2 25.6 30.6 C27.8 29.4 30 29.8 31.6 30.8" ${pen(2.4)}/>` },
+  { k: 'idea', name: 'idea', svg: `<path d="M5.2 9.6 L8.6 11.8 M42.8 9.6 L39.4 11.8 M3.8 20 H7.6 M44.2 20 H40.4" ${pen(2)}/>` +
+      patch('M24 5.8 C31.6 5.8 36.6 11.4 36.6 18.4 C36.6 23.4 33.6 26.6 31.1 29.4 C30 30.7 29.6 32 29.6 33.6 H18.4 C18.4 32 18 30.7 16.9 29.4 C14.4 26.6 11.4 23.4 11.4 18.4 C11.4 11.4 16.4 5.8 24 5.8 Z', 'yellow',
+        'M36.4 17 C36.6 23.2 33.6 26.6 31.1 29.4 C30 30.7 29.6 32 29.6 33.6 H25.6 C26.6 27.6 33.4 25 36.4 17 Z') +
+      patch('M18.6 33.8 H29.4 V38.6 C29.4 40.6 27.4 42.2 24 42.2 C20.6 42.2 18.6 40.6 18.6 38.6 Z', 'grey') + `<path d="M18.8 37.4 H29.2" ${pen(1.6)}/><path d="M20.6 26.4 L22.4 20.4 L24 24.4 L25.6 20.4 L27.4 26.4" ${pen(1.6)}/>` +
+      `<path d="M17 14.2 C17.8 11.8 19.6 10.2 21.8 9.8" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" opacity=".9"/>` },
+  { k: 'fire', name: 'hot', svg: patch('M24 42.6 C15 42.6 9.4 36.6 9.4 29 C9.4 21.4 15 17 17.6 10.4 C19.6 13.8 20.6 16.6 20.1 19.6 C23 16.6 25.6 11 25 5.4 C32.2 10 38.6 18.4 38.6 28.6 C38.6 36.6 32.6 42.6 24 42.6 Z', 'peach',
+      'M38.4 27 C38.8 36 32.8 42.6 24 42.6 C31 40.2 36.4 34.6 38.4 27 Z') +
+      `<path d="M24 41.6 C19.6 41.6 17.2 38.4 17.2 35 C17.2 31.2 20 29.2 21.6 25.6 C23.6 28 24.6 29.6 24.6 31.6 C26.6 30 28 27.6 28 25.2 C30.6 28 31.4 31 31.4 34.4 C31.4 38.6 28.6 41.6 24 41.6 Z" fill="${PASTEL.yellow}" ${pen(1.7).replace('fill="none" ', '')}/>` },
+  { k: 'question', name: 'question', svg: patch('M7.8 10.4 C7.8 7.8 9.8 6 12.4 6 H35.6 C38.2 6 40.2 7.8 40.2 10.4 V28.8 C40.2 31.4 38.2 33.2 35.6 33.2 H22.4 L13.8 40.6 L15.4 33.2 H12.4 C9.8 33.2 7.8 31.4 7.8 28.8 Z', 'purple',
+      'M40.2 21 V28.8 C40.2 31.4 38.2 33.2 35.6 33.2 H22.4 L19.2 35.9 C27 31.8 34.6 28.8 40.2 21 Z') +
+      `<path d="M19.6 15.2 C19.6 12.2 21.6 10.6 24.2 10.6 C27 10.6 29 12.4 29 14.9 C29 17.6 26.6 18.4 25.1 19.7 C24.4 20.3 24.1 21.1 24.1 22.6" ${pen(3)}/>${stkDot(24.1, 27.6, 2)}` },
+  { k: 'alert', name: 'important', svg: patch('M24 6.4 C25 6.4 25.8 7 26.4 8 L42.4 37.6 C43.4 39.6 42.2 41.6 40 41.6 H8 C5.8 41.6 4.6 39.6 5.6 37.6 L21.6 8 C22.2 7 23 6.4 24 6.4 Z', 'peach',
+      'M42.4 37.6 C43.4 39.6 42.2 41.6 40 41.6 H16 C26 39.4 34.6 31.4 36.8 27.2 Z') + `<path d="M24 17 V28.6" ${pen(3.6)}/>${stkDot(24, 34.6, 2.3)}` },
+  { k: 'party', name: 'party', svg: patch('M7.6 42 L17.6 15.4 L33 30.8 Z', 'purple', 'M33 30.8 L7.6 42 L24.6 22.4 Z') +
+      `<path d="M12.6 29 L21.6 38 M15.4 21.8 L28.2 34.6" ${pen(1.8)}/>` +
+      `<circle cx="30.4" cy="9.6" r="2.6" fill="${PASTEL.peach}" stroke="${STK_INK}" stroke-width="1.6"/><circle cx="40" cy="20.2" r="2.4" fill="${PASTEL.blue}" stroke="${STK_INK}" stroke-width="1.6"/>` +
+      `<rect x="36.2" y="6.2" width="4.4" height="4.4" rx="1" transform="rotate(20 38.4 8.4)" fill="${PASTEL.green}" stroke="${STK_INK}" stroke-width="1.6"/>` +
+      `<path d="M22.6 5.4 C25 7.4 22.4 9.6 24.8 11.8 M35.4 27.8 C38.6 25.6 38.8 31.6 42.4 29.4 M26.2 18.4 L31.4 13.2" ${pen(2)}/>` },
+];
+
+// Stickers saved as emoji by earlier versions, as the drawn sticker nearest them.
+const EMOJI_STK = { '👍': 'plus1', '❤️': 'heart', '😀': 'happy', '😍': 'heart', '🤔': 'hmm', '😮': 'wow', '🎉': 'party', '⭐': 'star', '✅': 'check', '❓': 'question', '🔥': 'fire', '💡': 'idea', '👀': 'wow' };
+const STK_BY = Object.fromEntries(STICKER_SET.map(x => [x.k, x]));
+const stkKey = e => STK_BY[e] ? e : EMOJI_STK[e] || e;
+const stkName = e => STK_BY[stkKey(e)]?.name || e;
+// A sticker drawn at size on the board, centred on 0,0; an unknown one as its text.
+const STK_SIZE = 40;
+const stkArt = (e, size = STK_SIZE) => STK_BY[stkKey(e)] ? `<g transform="scale(${size / 48}) translate(-24,-24)" filter="url(#stk-cut)">${STK_BY[stkKey(e)].svg}</g>`
+  : `<text text-anchor="middle" dominant-baseline="central" filter="url(#stk-cut)">${esc(e)}</text>`;
+// A sticker as a small picture for the pickers.
+const stkIcon = e => `<svg class="stk-ic" viewBox="-5 -5 58 58" aria-hidden="true">${STK_BY[stkKey(e)]?.svg || ''}</svg>`;
+
+// Stickers, as on Claude whiteboards: die-cut drawings stuck on a box, note or frame, hanging over its top-right corner. They follow what they're on,
+// and they count: a board can vote with them. Drag one to move it or onto something else; drag it off to peel it off.
+const STICKERS = STICKER_SET.map(x => x.k);
+let stickerPick = STICKERS[0];
+const stkOf = x => P(x, 'stk') || [];
+const stkTilt = (s, i) => s.r ?? ((i * 37 + s.e.codePointAt(0)) % 25) - 12;
+function stickersSvg(key, x, b) {
+  let fan = 0;
+  return stkOf(x).map((s, i) => {
+    const p = s.x != null ? { x: b.x + s.x, y: b.y + s.y } : { x: b.x + b.w / 2 - 6 - fan++ * 27, y: b.y - b.h / 2 - 4 };
+    const moving = drag?.kind === 'stk' && drag.key === key && drag.i === i && drag.moved;
+    return `<g class="stk${moving ? ' moving' : ''}" data-stk="${esc(key)}" data-si="${i}" transform="translate(${moving ? `${drag.at.x},${drag.at.y}` : `${p.x},${p.y}`}) rotate(${stkTilt(s, i)})"><title>${esc(stkName(s.e))} · drag to move, drag off to peel off, Alt-click removes</title>${stkArt(s.e)}</g>`;
   }).join('');
 }
-function addSticker(n, e, d = 1) {
-  const st = { ...(P(n, 'st') || {}) }; st[e] = Math.max(0, (st[e] || 0) + d); if (!st[e]) delete st[e];
-  setProp(n, 'st', Object.keys(st).length ? st : null);
+// at: a board point to stick it to (else the fan); b: the box it goes on.
+function addSticker(x, e, at = null, b = null) {
+  const s = { e };
+  if (at && b) Object.assign(s, { x: Math.round(at.x - b.x), y: Math.round(at.y - b.y) });
+  setProp(x, 'stk', [...stkOf(x), s]);
+}
+function removeSticker(x, i) { const list = stkOf(x).filter((_, j) => j !== i); setProp(x, 'stk', list.length ? list : null); }
+const stkCounts = x => stkOf(x).reduce((a, s) => { const n = stkName(s.e); a[n] = (a[n] || 0) + 1; return a; }, {});
+// What a sticker can go on, under a board point: a box, else a frame.
+function stickTarget(p) {
+  const id = connectTarget(p, null);
+  if (!id) return null;
+  return state.nodes.has(id) ? { key: `n:${id}`, x: state.nodes.get(id), b: boxes.get(id) } : { key: `g:${id}`, x: state.groups.get(id), b: groupBoxes.get(id) };
 }
 
 // ---------- rendering ----------
@@ -1568,17 +1642,20 @@ function render() {
     const n = state.nodes.get(id), pic = n.shape === 'image';
     const kind = isUi(n) ? 'ui' : isTicket(n) ? 'ticket' : ['sticky', 'text', 'icon', 'table', 'doc', 'phone', 'browser', 'image'].includes(n.shape) ? n.shape : '';
     // A picture already sent to the chat fades, so the editable diagram stands out; hover or select to compare.
-    if (P(n, 'st')) stickers += stickersSvg(n, b);
-    const cls = ['node', kind, n.marked && 'marked', P(n, 'locked') && 'locked', isSel(`n:${id}`) && 'sel', ['connect', 'reend', 'iend'].includes(drag?.kind) && drag.target === id && 'drop-target', flash.has(id) && `flash-${flash.get(id)}`, n.sent && kind === 'image' && 'faded'].filter(Boolean).join(' ');
+    if (P(n, 'stk')) stickers += stickersSvg(`n:${id}`, n, b);
+    const cls = ['node', kind, n.marked && 'marked', P(n, 'locked') && 'locked', editor?.target.type === 'node' && editor.target.id === id && editor.ta.classList.contains('in-place') && 'editing', isSel(`n:${id}`) && 'sel', ['connect', 'reend', 'iend'].includes(drag?.kind) && drag.target === id && 'drop-target', flash.has(id) && `flash-${flash.get(id)}`, n.sent && kind === 'image' && 'faded'].filter(Boolean).join(' ');
     const a = (!kind || kind === 'table' || kind === 'doc') && accentOf(n.group);
     const g = `<g class="${cls}" data-node="${esc(id)}" transform="translate(${b.x},${b.y})"${colorVars(n, a && { stroke: a })}>${nodeInner(n, b)}</g>`;
     if (pic) pics += g; else html += g;
   }
   html += state.ink.filter(k => k.kind !== 'hl').map(inkSvg).join('');
+  for (const [gid, gb] of groupBoxes) { const g = state.groups.get(gid); if (P(g, 'stk')) stickers += stickersSvg(`g:${gid}`, g, gb); }
   html += stickers;
   if (drag?.kind === 'ink') html += inkSvg(drag.ink);
   html += state.comments.map(commentSvg).join('');
   html += handlesSvg();
+  html += `<g id="placer">${placerSvg()}</g>`;
+  if (areaRect) html += `<rect class="marquee area-rect" x="${areaRect.x0}" y="${areaRect.y0}" width="${areaRect.x1 - areaRect.x0}" height="${areaRect.y1 - areaRect.y0}"/>`;
   if (drag?.kind === 'marquee') {
     const x = Math.min(drag.x0, drag.x1), y = Math.min(drag.y0, drag.y1);
     html += `<rect class="marquee" x="${x}" y="${y}" width="${Math.abs(drag.x1 - drag.x0)}" height="${Math.abs(drag.y1 - drag.y0)}"/>`;
@@ -2138,7 +2215,7 @@ function startMove(p, single) {
 
 svg.addEventListener('pointerdown', e => {
   // Pan: the middle or right mouse button, or Space with the left one.
-  closeCmenu();
+  closeCmenu(); hideArea();
   if (e.button === 1 || e.button === 2 || (e.button === 0 && spaceDown)) {
     e.preventDefault(); drag = { kind: 'pan', sx: e.clientX, sy: e.clientY, vx: view.x, vy: view.y, rb: e.button === 2 };
     svg.setPointerCapture(e.pointerId); return;
@@ -2148,11 +2225,21 @@ svg.addEventListener('pointerdown', e => {
   const p = toWorld(e);
   const linkEl = e.target.closest?.('.rlink');
   if (linkEl && (e.metaKey || e.ctrlKey)) { e.preventDefault(); (pipWin || window).open(linkEl.dataset.href, '_blank', 'noopener'); return; }
-  const stEl = e.target.closest?.('[data-sticker]');
-  if (stEl && !markMode) {
-    e.preventDefault(); const n = state.nodes.get(stEl.dataset.sticker);
-    if (n) { pushUndo(); addSticker(n, stEl.dataset.emoji, e.altKey ? -1 : 1); commit('board', `${e.altKey ? 'Took' : 'Added'} ${stEl.dataset.emoji} ${e.altKey ? 'off' : 'to'} ${n.id}`); }
-    return;
+  const stEl = e.target.closest?.('[data-stk]');
+  if (stEl && !markMode && tool !== 'sticker') {
+    e.preventDefault();
+    const key = stEl.dataset.stk, i = +stEl.dataset.si, x = itemOf(key);
+    if (!x) return;
+    if (e.altKey) { pushUndo(); const em = stkOf(x)[i]?.e; removeSticker(x, i); commit('board', `Peeled ${stkName(em)} off ${x.id}`); return; }
+    drag = { kind: 'stk', key, i, snap: snapshot(), moved: false, p0: p, at: p };
+    svg.setPointerCapture(e.pointerId); return;
+  }
+  // The sticker tool sticks the picked sticker where you click.
+  if (tool === 'sticker' && !markMode) {
+    e.preventDefault();
+    const t = stickTarget(p);
+    if (!t) { toast('Stickers go on a box, a note or a frame'); return; }
+    pushUndo(); addSticker(t.x, stickerPick, p, t.b); commit('board', `Stuck ${stkName(stickerPick)} on ${t.x.id}`); return;
   }
   const portEl = e.target.closest('[data-port]'), sizeEl = e.target.closest('[data-resize]');
   if (portEl) { drag = { kind: 'connect', from: portEl.dataset.port, side: portEl.dataset.side, to: p }; svg.setPointerCapture(e.pointerId); return; }
@@ -2275,10 +2362,14 @@ function eraseAlong(e) {
 }
 
 svg.addEventListener('pointermove', e => {
-  if (!drag) return;
+  if (!drag) { if (PLACING.has(tool)) { hoverAt = toWorld(e); paintPlacer(); } return; }
   if (drag.kind === 'pan') { view.x = drag.vx + e.clientX - drag.sx; view.y = drag.vy + e.clientY - drag.sy; moveView(); return; }
   const p = toWorld(e);
   if (drag.kind === 'connect') { drag.to = p; drag.target = connectTarget(p, drag.from); render(); return; }
+  if (drag.kind === 'stk') {
+    if (!drag.moved && Math.hypot(p.x - drag.p0.x, p.y - drag.p0.y) * view.k < 3) return;
+    drag.moved = true; drag.at = p; render(); return;
+  }
   if (drag.kind === 'iend') {
     const k = state.ink.find(x => x.id === drag.id); if (!k) return;
     const other = P(k, drag.end ? 'from' : 'to')?.id;
@@ -2361,7 +2452,11 @@ svg.addEventListener('pointerup', e => {
   drag = null;
   if (!d) return;
   if (d.kind === 'pan') { if (d.rb && Math.hypot(e.clientX - d.sx, e.clientY - d.sy) < 5) rightClick(e); return; }
-  if (d.kind === 'marquee') { render(); return; }
+  if (d.kind === 'marquee') {
+    const r = { x0: Math.min(d.x0, d.x1), x1: Math.max(d.x0, d.x1), y0: Math.min(d.y0, d.y1), y1: Math.max(d.y0, d.y1) };
+    if ((r.x1 - r.x0) * view.k > 48 && (r.y1 - r.y0) * view.k > 36) showArea(r); else render();
+    return;
+  }
   if (d.kind === 'erase') { if (d.hit) commit('board', 'Erased ink'); return; }
   if (d.kind === 'ink') {
     const k = d.ink;
@@ -2391,6 +2486,16 @@ svg.addEventListener('pointerup', e => {
     commit('board', k.kind === 'arrow' ? 'Drew an arrow' : k.kind === 'hl' ? 'Highlighted with the pen' : 'Drew with the pen');
     if (k.kind === 'arrow') { setTool('select'); select({ type: 'ink', id: k.id }); }
     return;
+  }
+  if (d.kind === 'stk') {
+    if (!d.moved) { render(); return; }
+    const from = itemOf(d.key), s = from && stkOf(from)[d.i]; if (!s) { render(); return; }
+    const t = stickTarget(d.at);
+    pushUndo(d.snap);
+    removeSticker(from, d.i);
+    if (!t) { commit('board', `Peeled ${stkName(s.e)} off ${from.id}`); toast('Sticker peeled off. Undo puts it back.'); return; }
+    addSticker(t.x, s.e, d.at, t.b);
+    commit('board', t.x === from ? `Moved ${stkName(s.e)} on ${from.id}` : `Moved ${stkName(s.e)} to ${t.x.id}`); return;
   }
   if (d.kind === 'iend') {
     const k = state.ink.find(x => x.id === d.id); if (!k) { render(); return; }
@@ -2486,6 +2591,7 @@ svg.addEventListener('pointerup', e => {
 
 // The right button pans the board, so the browser's own menu stays out of the way there.
 svg.addEventListener('contextmenu', e => e.preventDefault());
+svg.addEventListener('pointerleave', () => { if (hoverAt) { hoverAt = null; paintPlacer(); } });
 svg.addEventListener('wheel', e => {
   e.preventDefault();
   const mouseWheel = e.deltaMode === 1 || (e.deltaX === 0 && Math.abs(e.deltaY) >= 50 && Number.isInteger(e.deltaY));
@@ -2539,6 +2645,8 @@ function setTool(t, shape) {
   svg.dataset.tool = t;
   paintInkCursor();
   for (const b of doc().querySelectorAll('#rail [data-pop="draw"]')) b.setAttribute('aria-pressed', String(['pen', 'hl', 'arrow', 'eraser'].includes(t)));
+  for (const b of doc().querySelectorAll('#rail [data-pop="sticker"]')) b.setAttribute('aria-pressed', String(t === 'sticker'));
+  hoverAt = null; paintPlacer();
   closePops();
 }
 
@@ -2568,9 +2676,7 @@ function placeItem(kind, p, { shape = toolShape, icon = null, edit = true, quiet
     sel = { type: 'group', id };
   } else {
     const ic = kind === 'icon' ? iconFor(icon) : null;
-    const s = kind === 'icon' ? 'icon' : kind === 'sticky' ? 'sticky' : kind === 'text' ? 'text' : shape;
-    const NEW = { sticky: ['note', ''], text: ['text', 'Text'], table: ['table', 'Table'], doc: ['doc', 'Untitled doc'], phone: ['phone', 'App screen'], browser: ['page', 'example.com'] };
-    const [base, label0] = NEW[s] || (TICKETS[s] ? [s, `New ${TICKETS[s].name.toLowerCase()}`] : ['n', 'New box']);
+    const sp = newSpec(kind, shape), s = kind === 'icon' ? 'icon' : sp.shape, base = sp.base, label0 = sp.label;
     id = ic ? freeId(ic.id.split('-').slice(0, 2).join('_'), false) : freeId(base);
     const label = ic ? ic.title : label0;
     state.nodes.set(id, { id, label, shape: s, icon: ic ? ic.key : null, group: into, marked: false, ...(s === 'table' ? { table: [['Name', 'Value'], ['', ''], ['', '']] } : {}) });
@@ -2590,6 +2696,26 @@ function pinAll() {
   for (const [gid, b] of groupBoxes) if (deviceOf(gid) && state.pos.get(gid)?.x == null) state.pos.set(gid, { ...state.pos.get(gid), x: b.x, y: b.y });
 }
 
+// What a tool would add, shown under the pointer before you click: a note, text, shape, frame or sticker.
+let hoverAt = null;
+const PLACING = new Set(['sticky', 'text', 'shape', 'frame', 'sticker']);
+function newSpec(kind, shape) {
+  const s = kind === 'sticky' ? 'sticky' : kind === 'text' ? 'text' : shape;
+  const NEW = { sticky: ['note', ''], text: ['text', 'Text'], table: ['table', 'Table'], doc: ['doc', 'Untitled doc'], phone: ['phone', 'App screen'], browser: ['page', 'example.com'] };
+  const [base, label] = NEW[s] || (TICKETS[s] ? [s, `New ${TICKETS[s].name.toLowerCase()}`] : ['n', 'New box']);
+  return { shape: s, base, label };
+}
+function placerSvg() {
+  if (!hoverAt || drag || markMode || !PLACING.has(tool)) return '';
+  const { x, y } = hoverAt;
+  if (tool === 'sticker') return `<g class="place-ghost stk" transform="translate(${x},${y}) rotate(-8)">${stkArt(stickerPick)}</g>`;
+  if (tool === 'frame') return `<g class="place-ghost group"><rect x="${x - 240}" y="${y - 160}" width="480" height="320" rx="8"/><text class="group-title" x="${x - 238}" y="${y - 171}">Frame</text></g>`;
+  const sp = newSpec(tool, toolShape), n = { id: '_ghost', label: sp.label, shape: sp.shape, group: null, ...(sp.shape === 'table' ? { table: [['Name', 'Value'], ['', ''], ['', '']] } : {}) };
+  const b = { ...nodeSize(n), shape: sp.shape, x: 0, y: 0 };
+  const kind = isUi(n) ? 'ui' : isTicket(n) ? 'ticket' : ['sticky', 'text', 'icon', 'table', 'doc', 'phone', 'browser', 'image'].includes(n.shape) ? n.shape : '';
+  return `<g class="place-ghost node ${kind}" transform="translate(${x},${y})">${nodeInner(n, b)}</g>`;
+}
+function paintPlacer() { const g = $('#placer'); if (g) g.innerHTML = placerSvg(); }
 // The middle of what the board shows, in board coordinates.
 function viewCentre() {
   const r = svg.getBoundingClientRect();
@@ -2619,14 +2745,29 @@ function openEditor(target) {
     text = e.label; b = { x: (a.x + c.x) / 2, y: (a.y + c.y) / 2, w: 160, h: 30 };
   }
   const ta = document.createElement('textarea');
-  ta.className = `editor${multiline || target.type === 'comment' ? ' editor-left' : ''}`; ta.value = text;
+  const n0 = target.type === 'node' && state.nodes.get(target.id), inPlace = n0 && !multiline && n0.shape !== 'icon' && !isUi(n0);
+  ta.className = `editor${multiline || target.type === 'comment' ? ' editor-left' : ''}${inPlace ? ' in-place' : ''}`; ta.value = text;
   if (multiline) ta.title = 'Ctrl+Enter or click outside to finish';
-  const w = Math.max(120, b.w * view.k), h = Math.max(32, b.h * view.k);
-  Object.assign(ta.style, { left: `${view.x + b.x * view.k - w / 2}px`, top: `${view.y + b.y * view.k - h / 2}px`, width: `${w}px`, height: `${h}px` });
-  if (target.type === 'node' && b.fs && !multiline) ta.style.fontSize = `${Math.max(11, b.fs * view.k)}px`;
+  let w = Math.max(120, b.w * view.k), h = Math.max(32, b.h * view.k), cx = b.x, cy = b.y;
+  if (inPlace) {
+    // The shape stays visible under see-through text, in the shape's own size, weight, colour and alignment.
+    w = b.w * view.k; h = b.h * view.k;
+    const el = svg.querySelector(`[data-node="${CSS.escape(target.id)}"] text`), cs = el && getComputedStyle(el);
+    const fs = (b.fs || (isTicket(n0) ? 13 : 14)) * view.k, lh = (b.lh || (isTicket(n0) ? 18 : 18)) * view.k, lines = Math.max(1, (b.lines || ['']).length + (b.meta?.length || 0));
+    Object.assign(ta.style, { fontSize: `${fs}px`, lineHeight: `${lh}px`, color: cs?.fill || '', fontWeight: n0.shape === 'text' || isTicket(n0) ? '600' : '500' });
+    if (isTicket(n0)) Object.assign(ta.style, { textAlign: 'left', padding: `${26 * view.k}px ${12 * view.k}px 4px ${14 * view.k}px` });
+    else {
+      ta.style.textAlign = P(n0, 'align') || 'center';
+      ta.style.paddingTop = `${Math.max(2, (h - lines * lh) / 2)}px`;
+      const side = n0.shape === 'sticky' ? 14 : 12; ta.style.paddingLeft = ta.style.paddingRight = `${side * view.k}px`;
+    }
+  }
+  Object.assign(ta.style, { left: `${view.x + cx * view.k - w / 2}px`, top: `${view.y + cy * view.k - h / 2}px`, width: `${w}px`, height: `${h}px` });
+  if (target.type === 'node' && b.fs && !multiline && !inPlace) ta.style.fontSize = `${Math.max(11, b.fs * view.k)}px`;
   $('.board-wrap').append(ta);
   ta.focus(); ta.select();
   editor = { ta, target };
+  if (inPlace) svg.querySelector(`[data-node="${CSS.escape(target.id)}"]`)?.classList.add('editing');
   ta.addEventListener('keydown', ev => {
     if (ev.key === 'Enter' && (multiline ? ev.metaKey || ev.ctrlKey : !ev.shiftKey)) { ev.preventDefault(); closeEditor(true); }
     if (ev.key === 'Escape') { ev.preventDefault(); closeEditor(false); }
@@ -2648,6 +2789,7 @@ function closeEditor(keep) {
   editor = null;
   const value = ta.value.trim();
   ta.remove();
+  for (const el of svg.querySelectorAll('.node.editing')) el.classList.remove('editing');
   if (!keep) return;
   if (target.type === 'comment') {
     const c = state.comments.find(x => x.id === target.id); if (!c || c.text === value) return;
@@ -2880,11 +3022,7 @@ onDoc('keydown', e => {
   else if (mod && k === 'g') { e.preventDefault(); if (e.shiftKey) ungroupSel(); else groupSel(); }
   else if (mod && e.shiftKey && k === 'l') { e.preventDefault(); lockSel(!pickable().some(isLocked)); }
   else if (mod && (e.key === ']' || e.key === '[')) { e.preventDefault(); stackSel(e.key === ']'); }
-  else if (mod && (k === 'c' || k === 'x')) {
-    const clip = sel && sel.type !== 'edge' && copySelection(); if (!clip) return;
-    e.preventDefault(); copyText(clip.text);
-    if (k === 'x') deleteSelection(); else toast('Copied. Paste here, on another board, or in the chat.');
-  }
+  else if (mod && (k === 'c' || k === 'x')) { /* the browser's copy and cut events below */ }
   else if (mod && k === 'd') { e.preventDefault(); const clip = sel && copySelection(); if (clip) pasteClip(clip); }
   else if (mod && k === 'a') { e.preventDefault(); selectAll(); }
   else if (e.key.startsWith('Arrow') && sel && sel.type !== 'edge') {
@@ -2894,6 +3032,7 @@ onDoc('keydown', e => {
   else if (e.key === ' ' && !e.repeat) { e.preventDefault(); spaceDown = true; svg.classList.add('panning'); }
   else if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); deleteSelection(); }
   else if (e.key === 'Escape' && !$('#cmenu').hidden) closeCmenu();
+  else if (e.key === 'Escape' && areaRect) hideArea();
   else if (e.key === 'Escape' && drag?.kind === 'ink') { drag = null; render(); }
   else if (e.key === 'Escape') { select(null); setTool('select'); if (markMode) setMarkMode(false); }
   else if (mod || e.altKey) return;
@@ -2907,14 +3046,35 @@ onDoc('keydown', e => {
   else if (e.key.toLowerCase() === 'i') openPop('icon');
   else if (e.key.toLowerCase() === 'p') setTool('pen');
   else if (e.key.toLowerCase() === 'h') setTool('hl');
+  else if (e.key.toLowerCase() === 's') openPop('sticker');
   else if (e.key.toLowerCase() === 'e') setTool('eraser');
   else if (e.key.toLowerCase() === 'c') setTool('comment');
 });
 onDoc('keyup', e => { if (e.key === ' ') { spaceDown = false; svg.classList.remove('panning'); } });
 
+// Copy and cut: the items go on the clipboard as Kiertotie's own (for pasting on any board) and as Mermaid
+// (for the chat). Text selected on the page, or in a text box, copies as usual.
+function onCopyCut(e, cut) {
+  const d = e.target?.ownerDocument || document;
+  const pick = d.getSelection?.(), picked = pick && pick.toString() && !pick.anchorNode?.parentElement?.closest('#board');
+  if (typing(e.target) || typing(d.activeElement) || picked) return;
+  if (!sel || sel.type === 'edge' || !e.clipboardData) return;
+  const clip = copySelection(); if (!clip) return;
+  e.preventDefault();
+  e.clipboardData.setData('text/plain', clip.text);
+  e.clipboardData.setData(CLIP_MIME, JSON.stringify(clip));
+  if (cut) deleteSelection(); else toast('Copied. Paste here, on another board, or in the chat.');
+}
+const CLIP_MIME = 'application/x-kiertotie';
+onDoc('copy', e => onCopyCut(e, false));
+onDoc('cut', e => onCopyCut(e, true));
+
 const looksLikeDiagram = text => /-->|---|==>|-\.->|^\s*(flowchart|graph|subgraph)\b|^\s*(remove|delete|rename|mark|unmark)\s+\S/im.test(text);
 
 onDoc('paste', e => {
+  // Items copied on a board come first, before any picture also on the clipboard.
+  const own = !typing(e.target) && e.clipboardData?.getData(CLIP_MIME);
+  if (own) { try { const clip = JSON.parse(own); e.preventDefault(); pasteClip(clip); return; } catch { /* not ours after all */ } }
   // A picture: it becomes an image on the board, also when pasted into the start box or the request box.
   const file = [...(e.clipboardData?.files || [])].find(f => f.type.startsWith('image/'))
     || [...(e.clipboardData?.items || [])].find(i => i.kind === 'file' && i.type.startsWith('image/'))?.getAsFile();
@@ -2976,6 +3136,41 @@ function stackSel(front) {
   commit('board', front ? 'Brought to front' : 'Sent to back');
 }
 
+// After a drag on empty board: make a frame, a note or a shape exactly that size, as in Miro.
+let areaRect = null;
+const AREA_SHAPES = [['sticky', 'Sticky note'], ['box', 'Box'], ['round', 'Rounded box'], ['circle', 'Circle'], ['diamond', 'Decision'], ['text', 'Text']];
+function showArea(r) {
+  areaRect = r; render();
+  const pop = $('#area-pop'), wrap = $('.board-wrap').getBoundingClientRect();
+  pop.innerHTML = `<button data-area="frame" class="area-frame" title="A frame round this area; what is inside goes into it">${glyphPath('<path d="M6 2 V18 M14 2 V18 M2 6 H18 M2 14 H18"/>')}<span>Frame</span></button><span class="ctx-sep"></span>` +
+    AREA_SHAPES.map(([k, t]) => `<button data-area="${k}" title="${t} this size">${$(`#shape-pop [data-shape="${k}"] svg`)?.outerHTML || (k === 'sticky' ? glyphPath('<path d="M4 4 H16 V12 L12 16 H4 Z M16 12 H12 V16"/>') : glyphPath('<path d="M4 5 V4 H16 V5 M10 4 V16 M7.5 16 H12.5"/>'))}</button>`).join('');
+  pop.hidden = false;
+  const w = pop.offsetWidth, h = pop.offsetHeight;
+  let left = view.x + (r.x0 + r.x1) / 2 * view.k - w / 2, top = view.y + r.y1 * view.k + 10;
+  if (top > wrap.height - h - 60) top = view.y + r.y0 * view.k - h - 10;
+  pop.style.left = `${Math.max(56, Math.min(wrap.width - w - 8, left))}px`; pop.style.top = `${Math.max(8, Math.min(wrap.height - h - 8, top))}px`;
+}
+function hideArea() { if (!areaRect) return; areaRect = null; const pop = $('#area-pop'); if (pop) pop.hidden = true; render(); }
+function makeFromArea(kind) {
+  const r = areaRect; if (!r) return;
+  hideArea();
+  const c = { x: (r.x0 + r.x1) / 2, y: (r.y0 + r.y1) / 2 }, w = Math.round(r.x1 - r.x0), h = Math.round(r.y1 - r.y0);
+  if (kind === 'frame') {
+    pushUndo(); pinAll();
+    const into = groupAt(c), id = freeId('frame'), inside = b => b.x - b.w / 2 >= r.x0 && b.x + b.w / 2 <= r.x1 && b.y - b.h / 2 >= r.y0 && b.y + b.h / 2 <= r.y1;
+    state.groups.set(id, { id, title: 'Frame', parent: into, marked: false });
+    state.pos.set(id, { x: c.x, y: c.y, w, h });
+    // What lies wholly inside goes into the new frame.
+    for (const n of state.nodes.values()) { const b = boxes.get(n.id); if (b && (n.group || null) === into && inside(b)) n.group = id; }
+    for (const g of state.groups.values()) { const b = groupBoxes.get(g.id); if (g.id !== id && b && (g.parent || null) === into && inside(b)) g.parent = id; }
+    sel = { type: 'group', id };
+    commit('board', `Added ${id}`); openEditor(sel); return;
+  }
+  const id = kind === 'sticky' || kind === 'text' ? placeItem(kind, c, { quiet: true }) : placeItem('shape', c, { shape: kind, quiet: true });
+  state.pos.set(id, { x: c.x, y: c.y, w, h });
+  commit('board', `Added ${id}`); openEditor(sel);
+}
+
 // The right-click menu: for what is under the pointer, or for the empty board there.
 let cmenuAt = null;
 function rightClick(e) {
@@ -2997,7 +3192,7 @@ function openCmenu(cx, cy) {
     if (keys.length) html += sep + it('front', 'Bring to front', `${M}]`) + it('back', 'Send to back', `${M}[`) + sep +
       (keys.length > 1 ? it('group', 'Group', `${M}G`) : '') + (grouped ? it('ungroup', 'Ungroup', `${M}⇧G`) : '') +
       (locked ? it('unlock', 'Unlock', `${M}⇧L`) : it('lock', 'Lock', `${M}⇧L`));
-    if (sel?.type === 'node' && !isUi(state.nodes.get(sel.id))) html += `<div class="cm-stickers" role="group" aria-label="Stickers">${STICKERS.map(x => `<button data-cm="st" data-emoji="${x}" title="Add ${x}">${x}</button>`).join('')}</div>`;
+    if ((sel?.type === 'node' && !isUi(state.nodes.get(sel.id))) || (sel?.type === 'group' && !state.groups.get(sel.id)?.dev)) html += `<div class="cm-stickers" role="group" aria-label="Stickers">${STICKERS.map(x => `<button data-cm="st" data-emoji="${x}" title="${esc(stkName(x))}">${stkIcon(x)}</button>`).join('')}</div>`;
     html += sep + it('del', 'Delete', 'Del', keys.length > 0 && keys.every(isLocked));
   } else {
     html += (clip ? it('paste', 'Paste here', `${M}V`) + sep : '') + it('sticky', 'Sticky note here', 'N') + it('text', 'Text here', 'T') +
@@ -3019,7 +3214,7 @@ function cmenuAct(a, el) {
   if (a === 'group') groupSel();
   if (a === 'ungroup') ungroupSel();
   if (a === 'lock' || a === 'unlock') lockSel(a === 'lock');
-  if (a === 'st' && sel?.type === 'node') { const n = state.nodes.get(sel.id); pushUndo(); addSticker(n, el.dataset.emoji); commit('board', `Added ${el.dataset.emoji} to ${n.id}`); }
+  if (a === 'st' && (sel?.type === 'node' || sel?.type === 'group')) { const x = itemOf(keyOf(sel)); pushUndo(); addSticker(x, el.dataset.emoji); commit('board', `Stuck ${stkName(el.dataset.emoji)} on ${x.id}`); }
   if (a === 'del') deleteSelection();
   if (a === 'sticky' || a === 'text' || a === 'frame') placeItem(a, p);
   if (a === 'shape') placeItem('shape', p, { shape: 'box' });
@@ -3116,34 +3311,48 @@ function renderIconGrid() {
 
 // ---------- templates ----------
 
+// What only the board keeps, for a template: %% @props key {…}.
+const pr = (key, obj) => `%% @props ${key} ${enc(JSON.stringify(obj))}`;
+const stk = (...es) => ({ stk: es.map(e => ({ e })) });
+// A title and a line under it, above a board: big bold text, then a hint in italics.
+function heading(title, sub, cx, top) {
+  return { L: [`  title@{ shape: text, label: "**${title}**" }`, ...(sub ? [`  sub@{ shape: text, label: "*${sub}*" }`] : [])],
+    style: ['  style title font-size:34px', ...(sub ? ['  style sub font-size:16px'] : [])],
+    pos: [`%% @pos title ${cx} ${top}`, ...(sub ? [`%% @pos sub ${cx} ${top + 42} 720 28`] : [])] };
+}
 // Columns of sticky notes in frames: a retrospective, a kanban board. wrap: frames per row.
-function stickyBoard(cols, { wrap = cols.length, theme = 'pastel' } = {}) {
+// A note is [text, colour, stickers…]; title and sub go above the columns.
+function stickyBoard(cols, { wrap = cols.length, theme = 'pastel', title = '', sub = '' } = {}) {
   const S = 160, G = 24, PADX = 24, PADT = 44, PADB = 24, per = 2, gap = 64;
   const colW = PADX * 2 + per * S + (per - 1) * G;
   const rows = Math.max(...cols.map(c => Math.ceil(c.notes.length / per)));
   const colH = PADT + rows * S + (rows - 1) * G + PADB;
-  const L = ['flowchart LR'], style = [], pos = [];
+  const L = ['flowchart LR'], style = [], pos = [], props = [];
+  if (title) { const h = heading(title, sub, (Math.min(wrap, cols.length) * (colW + gap) - gap) / 2, sub ? -118 : -84); L.push(...h.L); style.push(...h.style); pos.push(...h.pos); }
   cols.forEach((c, k) => {
     const x0 = (k % wrap) * (colW + gap), y0 = Math.floor(k / wrap) * (colH + gap);
     L.push(`  subgraph ${c.id}["${c.label}"]`);
-    c.notes.forEach(([text, fill], i) => {
+    c.notes.forEach(([text, fill, ...votes], i) => {
       const id = `${c.id}${i + 1}`;
       L.push(`    ${id}["${text}"]:::sticky`); style.push(`  style ${id} fill:${fill}`);
+      if (votes.length) props.push(pr(`n:${id}`, stk(...votes)));
       pos.push(`%% @pos ${id} ${x0 + PADX + (i % per) * (S + G) + S / 2} ${y0 + PADT + Math.floor(i / per) * (S + G) + S / 2}`);
     });
     L.push('  end');
     pos.push(`%% @pos ${c.id} ${x0 + colW / 2} ${y0 + colH / 2} ${colW} ${colH}`);
   });
-  return [...L, ...style, ...pos, ...(theme ? [`%% @theme ${theme}`] : [])].join('\n');
+  return [...L, ...style, ...pos, ...props, ...(theme ? [`%% @theme ${theme}`] : [])].join('\n');
 }
-function brainstorm(topic, ideas) {
-  const L = ['flowchart LR', `  topic(("${topic}"))`], pos = ['%% @pos topic 0 0'];
-  ideas.forEach(([text, fill], i) => {
+function brainstorm(topic, ideas, { title = '', sub = '' } = {}) {
+  const L = ['flowchart LR', `  topic(("**${topic}**"))`], pos = ['%% @pos topic 0 0'], props = [], style = [];
+  if (title) { const h = heading(title, sub, 0, -420); L.push(...h.L); style.push(...h.style); pos.push(...h.pos); }
+  ideas.forEach(([text, fill, ...votes], i) => {
     const a = -Math.PI / 2 + i * 2 * Math.PI / ideas.length, id = `idea${i + 1}`;
     L.push(`  ${id}["${text}"]:::sticky`, `  topic --- ${id}`, `  style ${id} fill:${fill}`);
     pos.push(`%% @pos ${id} ${Math.round(Math.cos(a) * 340)} ${Math.round(Math.sin(a) * 260)}`);
+    if (votes.length) props.push(pr(`n:${id}`, stk(...votes)));
   });
-  return [...L, '  style topic fill:#1a1a1a,stroke:#1a1a1a,color:#ffffff', ...pos].join('\n');
+  return [...L, '  style topic fill:#1a1a1a,stroke:#1a1a1a,color:#ffffff', ...style, ...pos, ...props].join('\n');
 }
 
 const NOTE = { y: '#fff59d', b: '#c5d8ff', g: '#c3f0c8', p: '#fcc2d7', o: '#ffd8a8', v: '#d0bfff', r: '#ffc9c9' };
@@ -3151,6 +3360,7 @@ const TEMPLATES = [
   { cat: 'Architecture', id: 'webapp', name: 'Azure web application', desc: 'Front Door, App Service, Functions, SQL', tint: '#e3f0fb', code: `flowchart LR
   user@{ icon: "azure:users", label: "Customers" }
   entra@{ icon: "azure:entra-id", label: "Entra ID" }
+  net@{ shape: cloud, label: "Internet" }
   fd@{ icon: "azure:front-door-and-cdn-profiles", label: "Front Door" }
   subgraph rg["Resource group: prod"]
     subgraph vnet["Virtual network"]
@@ -3162,7 +3372,8 @@ const TEMPLATES = [
     st@{ icon: "azure:storage-accounts", label: "Blob storage" }
     ai@{ icon: "azure:application-insights", label: "App Insights" }
   end
-  user --> fd
+  user --> net
+  net -->|HTTPS| fd
   user -.->|sign in| entra
   fd --> web
   web --> api
@@ -3181,10 +3392,12 @@ const TEMPLATES = [
   cosmos@{ icon: "azure:azure-cosmos-db", label: "Order store" }
   eg@{ icon: "azure:event-grid-topics", label: "Event Grid" }
   la@{ icon: "azure:logic-apps", label: "Notify customer" }
+  dlq@{ shape: h-cyl, label: "Dead letters" }
   bi@{ icon: "pp:power-bi", label: "Sales dashboard" }
   shop --> apim --> sb
   sb --> pay
   sb --> ship
+  sb -.->|after 5 tries| dlq
   pay --> cosmos
   ship --> cosmos
   cosmos -.->|change feed| eg
@@ -3237,7 +3450,9 @@ const TEMPLATES = [
   apim --> fn
   fn --> sql
   fn -.-> kv
-  sql --> bi` },
+  sql --> bi
+  rep@{ shape: doc, label: "Signed PDF report" }
+  flow -->|on approval| rep` },
   { cat: 'Architecture', id: 'data', name: 'Analytics pipeline', desc: 'Ingest, lake, transform and report', tint: '#e3f0fb', code: `flowchart LR
   subgraph sources[Sources]
     iot@{ icon: "azure:event-hubs", label: "Event Hubs" }
@@ -3257,7 +3472,10 @@ const TEMPLATES = [
   adf --> raw
   raw --> dbx
   dbx --> curated
-  curated ==> bi` },
+  curated ==> bi
+  layers["**Layers**<br>- *Raw*: as it arrives<br>- *Curated*: cleaned and joined"]:::sticky
+  layers -.- lake
+${pr('n:layers', { align: 'left' })}` },
   { cat: 'Screens', id: 'login', name: 'Mobile login flow', desc: 'Five phone screens and how they link', tint: '#eef1ff', code: `flowchart LR
   subgraph splash[Splash]
     sp_logo[" "]:::uiImage
@@ -3321,38 +3539,53 @@ const TEMPLATES = [
   f2 --> s3
   f2 --> s4
   s1 --> t1
-  s4 --> b1` },
-  { cat: 'Process', id: 'flow', name: 'Approval flowchart', desc: 'Shapes, decisions and colours', tint: '#fbf3dc', code: `flowchart TD
-  start([Expense submitted]) --> check{Over 500 EUR?}
+  s4 --> b1
+${pr('n:b1', stk('fire'))}
+${pr('n:s3', stk('star'))}` },
+  { cat: 'Process', id: 'flow', name: 'Approval flowchart', desc: 'Shapes, decisions, a document and a note', tint: '#fbf3dc', code: `flowchart TD
+  start([Expense submitted]) --> form[/Amount and receipt/]
+  form --> check{Over 500 EUR?}
   check -->|No| auto[Auto-approve]
   check -->|Yes| mgr[Manager review]
   mgr --> ok{Approved?}
   ok -->|Yes| pay[(Payroll)]
   ok -->|No| reject[Notify employee]
   auto --> pay
+  pay --> slip@{ shape: doc, label: "Pay slip" }
+  rules["**Rules**<br>- Receipts within *30 days*<br>- Over 500 EUR needs a manager"]:::sticky
+  rules -.- check
+${pr('n:rules', { align: 'left' })}
   style check fill:#fff59d,stroke:#d9a900
   style ok fill:#fff59d,stroke:#d9a900
   style reject fill:#ffc9c9,stroke:#e03131
   style pay fill:#c3f0c8,stroke:#2f9e44` },
   { cat: 'Workshop', id: 'retro', name: 'Retrospective', desc: 'Went well, could be better, actions', tint: '#fdeef2', code: stickyBoard([
-    { id: 'well', label: 'What went well', notes: [['Release shipped on time', NOTE.g], ['Pairing on the API', NOTE.g], ['Fewer incidents', NOTE.g], ['Clear sprint goal', NOTE.y]] },
-    { id: 'better', label: 'What could be better', notes: [['Too many meetings', NOTE.p], ['Flaky tests in CI', NOTE.r], ['Unclear schema owner', NOTE.o], ['Late design changes', NOTE.p]] },
-    { id: 'actions', label: 'Action items', notes: [['Timebox standup to 15 min', NOTE.b], ['Fix the 3 flakiest tests', NOTE.b], ['Name a schema owner', NOTE.v]] }]) },
+    { id: 'well', label: 'What went well', notes: [['Release shipped on time', NOTE.g, 'heart', 'heart'], ['Pairing on the API', NOTE.g, 'plus1'], ['Fewer incidents', NOTE.g], ['Clear sprint goal', NOTE.y]] },
+    { id: 'better', label: 'What could be better', notes: [['Too many meetings', NOTE.p, 'plus1', 'plus1', 'plus1'], ['Flaky tests in CI', NOTE.r, 'fire', 'plus1'], ['Unclear schema owner', NOTE.o], ['Late design changes', NOTE.p, 'hmm']] },
+    { id: 'actions', label: 'Action items', notes: [['Timebox standup to 15 min', NOTE.b], ['Fix the 3 flakiest tests', NOTE.b], ['Name a schema owner', NOTE.v]] }],
+    { title: 'Sprint 14 retrospective', sub: 'Add notes to each column, then vote with +1 stickers (S).' }) },
   { cat: 'Workshop', id: 'kanban', name: 'Kanban board', desc: 'To do, in progress, done', tint: '#fff6cc', code: stickyBoard([
     { id: 'todo', label: 'To do', notes: [['Write the onboarding guide', NOTE.y], ['Set up Dataverse tables', NOTE.y], ['Design the approval flow', NOTE.y], ['Collect report needs', NOTE.y]] },
     { id: 'doing', label: 'In progress', notes: [['Build the inspection app', NOTE.b], ['Custom connector for the API', NOTE.b]] },
-    { id: 'done', label: 'Done', notes: [['Environment created', NOTE.g], ['Security roles agreed', NOTE.g], ['Kick-off meeting', NOTE.g]] }]) },
+    { id: 'done', label: 'Done', notes: [['Environment created', NOTE.g, 'check'], ['Security roles agreed', NOTE.g, 'check'], ['Kick-off meeting', NOTE.g, 'party']] }],
+    { title: 'Team board', sub: 'Drag notes across as work moves.' }) },
   { cat: 'Workshop', id: 'ssc', name: 'Start, stop, continue', desc: 'Three columns of sticky notes', tint: '#eef6e2', code: stickyBoard([
     { id: 'start', label: 'Start', notes: [['Demo to users every sprint', NOTE.g], ['Write down big decisions', NOTE.g]] },
     { id: 'stop', label: 'Stop', notes: [['Merging without review', NOTE.r], ['Ad-hoc fixes in production', NOTE.p]] },
-    { id: 'cont', label: 'Continue', notes: [['Friday knowledge share', NOTE.b], ['Small pull requests', NOTE.b], ['Pairing on hard bugs', NOTE.y]] }]) },
+    { id: 'cont', label: 'Continue', notes: [['Friday knowledge share', NOTE.b, 'heart'], ['Small pull requests', NOTE.b, 'plus1', 'plus1'], ['Pairing on hard bugs', NOTE.y]] }],
+    { title: 'Start, stop, continue', sub: 'One idea per note. Stick a +1 on the ones you agree with.' }) },
   { cat: 'Workshop', id: 'swot', name: 'SWOT analysis', desc: 'Strengths, weaknesses, opportunities, threats', tint: '#eef6e2', code: stickyBoard([
     { id: 'str', label: 'Strengths', notes: [['Strong Azure skills', NOTE.g], ['Reusable components', NOTE.g]] },
     { id: 'weak', label: 'Weaknesses', notes: [['Small team', NOTE.r], ['Little test automation', NOTE.r]] },
     { id: 'opp', label: 'Opportunities', notes: [['Copilot Studio agents', NOTE.b], ['Legacy apps to move', NOTE.b]] },
-    { id: 'thr', label: 'Threats', notes: [['Licence costs', NOTE.o], ['Competing vendors', NOTE.o]] }], { wrap: 2 }) },
+    { id: 'thr', label: 'Threats', notes: [['Licence costs', NOTE.o, 'wow'], ['Competing vendors', NOTE.o]] }], { wrap: 2, title: 'SWOT analysis', sub: 'Inside: strengths and weaknesses. Outside: opportunities and threats.' }) },
   { cat: 'Workshop', id: 'brainstorm', name: 'Brainstorm', desc: 'One topic, ideas around it', tint: '#fdeef2', code: brainstorm('New hire onboarding', [
-    ['Welcome video from the team', NOTE.y], ['Buddy for the first month', NOTE.p], ['Laptop ready on day one', NOTE.b], ['Checklist app in Power Apps', NOTE.g], ['Weekly check-in with the lead', NOTE.o], ['Short quiz after week one', NOTE.v]]) },
+    ['Welcome video from the team', NOTE.y], ['Buddy for the first month', NOTE.p, 'heart', 'plus1'], ['Laptop ready on day one', NOTE.b, 'plus1', 'plus1', 'plus1'], ['Checklist app in Power Apps', NOTE.g, 'idea'], ['Weekly check-in with the lead', NOTE.o], ['Short quiz after week one', NOTE.v, 'hmm']],
+    { title: 'Brainstorm', sub: 'Ideas around the topic. Vote with stickers.' }) },
+  { cat: 'Workshop', id: 'dots', name: 'Dot voting', desc: 'Ideas to vote on with stickers', tint: '#fff6cc', code: stickyBoard([
+    { id: 'ideas', label: 'Ideas', notes: [['Self-service password reset', NOTE.y, 'plus1', 'plus1', 'plus1', 'plus1'], ['Chat on the support site', NOTE.y, 'plus1', 'plus1'], ['Status page for outages', NOTE.y, 'plus1', 'plus1', 'plus1'],
+      ['Monthly release notes', NOTE.y, 'plus1'], ['Dark mode', NOTE.y, 'heart', 'happy'], ['Offline mode for the app', NOTE.y, 'hmm']] }],
+    { title: 'Dot voting', sub: 'Everyone gets three +1 stickers. Most votes wins.' }) },
 ];
 
 // ---------- templates dialog and thumbnails ----------
@@ -3450,6 +3683,7 @@ function openPop(name, { target = null } = {}) {
   if (name === 'screen') paintScreenPop();
   if (name === 'draw') { if (!['pen', 'hl', 'arrow', 'eraser'].includes(tool)) setTool('pen'); pop.hidden = false; paintDrawColors(); }
   if (name === 'icon') { iconTarget = target; loadIcons(); renderIconGrid(); $('#icon-q').focus(); }
+  if (name === 'sticker') $('#sticker-grid').innerHTML = STICKERS.map(x => `<button data-pick-sticker="${x}" aria-pressed="${tool === 'sticker' && x === stickerPick}" title="${esc(stkName(x))}">${stkIcon(x)}</button>`).join('');
 }
 function closePops() {
   for (const p of doc().querySelectorAll('.pop')) p.hidden = true;
@@ -3483,7 +3717,8 @@ const ICON_SVG = {
   more: '<circle cx="3.5" cy="8" r="1.1"/><circle cx="8" cy="8" r="1.1"/><circle cx="12.5" cy="8" r="1.1"/>',
   'h-none': '<path d="M2 8 H14"/>', 'h-arrow': '<path d="M2 8 H13 M9 4 L13 8 L9 12"/>', 'h-circle': '<path d="M2 8 H10"/><circle cx="12" cy="8" r="2.2"/>',
   arrow: '<path d="M2 8 H13 M9 4 L13 8 L9 12"/>', reset: '<path d="M3.5 8 A4.5 4.5 0 1 0 5 4.6 M3.5 2.5 V5.5 H6.5"/>', trash: '<path d="M3 4.5 H13 M6 4.5 V3 H10 V4.5 M4.5 4.5 L5.2 13 H10.8 L11.5 4.5"/>',
-  mark: '<path d="M3 13 L5 11 L11 5 L13 7 L7 13 Z M10 4 L12 2 L14 4 L12 6"/>',
+  mark: '<path d="M9.2 2.4 L13.6 6.8 L8.4 12 L4 7.6 Z"/><path d="M4 7.6 L8.4 12 L6.6 13.6 L2.6 13.6 L2.3 13.3 L2.3 9.3 Z" fill="#ffd43b"/><path d="M10.3 3.5 L12.5 5.7"/>',
+  dup: '<rect x="5.5" y="5.5" width="8" height="8" rx="1.6"/><path d="M10.5 3 H4.2 A1.4 1.4 0 0 0 2.8 4.4 V10.5"/>',
   'al-left': '<path d="M2.5 2 V14 M5 5 H13 M5 11 H9"/>', 'al-center': '<path d="M8 2 V14 M3 5 H13 M5 11 H11"/>', 'al-right': '<path d="M13.5 2 V14 M3 5 H11 M7 11 H11"/>',
   'al-top': '<path d="M2 2.5 H14 M5 5 V13 M11 5 V9"/>', 'al-middle': '<path d="M2 8 H14 M5 3 V13 M11 5 V11"/>', 'al-bottom': '<path d="M2 13.5 H14 M5 3 V11 M11 7 V11"/>',
   'al-hspace': '<path d="M2 3 V13 M14 3 V13 M6.5 5 V11 M9.5 5 V11"/>', 'al-vspace': '<path d="M3 2 H13 M3 14 H13 M5 6.5 H11 M5 9.5 H11"/>',
@@ -3546,7 +3781,7 @@ function renderCtx() {
     const arrowBits = k.kind === 'arrow' ? headButtons(inkHeads(k), 'data-ihead') + `<button data-idash aria-pressed="${!!P(k, 'dash')}" title="Dashed">${glyph('dotted')}</button><span class="ctx-sep"></span>` : '';
     html = sw(list, list.indexOf(k.color), 'data-icolor') + '<span class="ctx-sep"></span>' + arrowBits +
       sizes.map((v, i) => `<button class="size-dot" data-isize="${v}" aria-pressed="${v === inkW(k)}" title="${['Thin', 'Medium', 'Thick'][i]}"><i style="--d:${[4, 8, 13][i]}px;--sw:${k.color}"></i></button>`).join('') +
-      `<span class="ctx-sep"></span>${del}<button data-more title="More (or right-click)">${glyph('more')}</button>`;
+      `<span class="ctx-sep"></span><button data-dup title="Duplicate (Ctrl+D)">${glyph('dup')}</button>${del}<button data-more title="More (or right-click)">${glyph('more')}</button>`;
   } else if (sel.type === 'comment') {
     const c = state.comments.find(x => x.id === sel.id); if (!c) { el.hidden = true; return; }
     b = commentBox(c);
@@ -3559,7 +3794,7 @@ function renderCtx() {
       (boxesSel > 1 ? al('left', 'Align left') + al('center', 'Align centres') + al('right', 'Align right') + al('top', 'Align top') + al('middle', 'Align middles') + al('bottom', 'Align bottom') +
         (boxesSel > 2 ? al('hspace', 'Space evenly across') + al('vspace', 'Space evenly down') : '') + '<span class="ctx-sep"></span>' : '') +
       (multiTextNodes().length ? fontPick(sameFs(multiTextNodes())) + '<span class="ctx-sep"></span>' : '') +
-      `<button data-frame-it title="Put them in a frame">Frame</button><span class="ctx-count">${selKeys().size}</span>${del}` +
+      `<button data-frame-it title="Put them in a frame">Frame</button><span class="ctx-count">${selKeys().size}</span><button data-dup title="Duplicate (Ctrl+D)">${glyph('dup')}</button>${del}` +
       `<button data-more title="More: front, back, group, lock… (or right-click)">${glyph('more')}</button>`;
   } else {
     const item = sel.type === 'node' ? state.nodes.get(sel.id) : state.groups.get(sel.id);
@@ -3585,12 +3820,13 @@ function renderCtx() {
     const hollow = c.fill === 'none' || c.fill === 'transparent';
     const outline = sel.type === 'node' && OUTLINE_OK(item) ? `<button data-hollow aria-pressed="${hollow}" title="Outline only">${glyph('hollow')}</button>` : '';
     const rowOpen = stickerRow === sel.id;
-    const stick = sel.type === 'node' && !isUi(item) ? `<button data-sticker-row aria-pressed="${rowOpen}" title="Stickers: add one to vote">${glyph('smile')}</button>` : '';
+    const stick = !isUi(item) && !(sel.type === 'group' && item.dev) ? `<button data-sticker-row aria-pressed="${rowOpen}" title="Stickers: add one to vote">${glyph('smile')}</button>` : '';
     const lock = P(item, 'locked') ? `<button data-unlock title="Locked: click to unlock">${glyph('lock')}</button>` : '';
     html = (lock || (swatches + pick + sized + align + outline)) + stick +
-      `<button data-markitem aria-pressed="${!!item.marked}" title="Highlight for your next request">${glyph('mark')}</button>` + (lock ? '' : del) +
+      `<button data-markitem aria-pressed="${!!item.marked}" title="Highlight for your next request">${glyph('mark')}</button>` +
+      `<button data-dup title="Duplicate (Ctrl+D)">${glyph('dup')}</button>` + (lock ? '' : del) +
       `<button data-more title="More: front, back, group, lock… (or right-click)">${glyph('more')}</button>` +
-      (rowOpen && stick ? `<div class="ctx-stickers">${STICKERS.map(e => `<button data-add-sticker="${e}" title="Add ${e}">${e}</button>`).join('')}</div>` : '');
+      (rowOpen && stick ? `<div class="ctx-stickers">${STICKERS.map(e => `<button data-add-sticker="${e}" title="${esc(stkName(e))}">${stkIcon(e)}</button>`).join('')}</div>` : '');
   }
   if (html !== ctxKey) { el.innerHTML = html; ctxKey = html; }
   el.hidden = false;
@@ -3629,6 +3865,7 @@ function ctxClick(e) {
   const t = e.target.closest('button'); if (!t || !sel) return;
   if (t.dataset.del != null) return deleteSelection();
   if (t.dataset.more != null) { const r = t.getBoundingClientRect(); openCmenu(r.left, r.bottom + 6); return; }
+  if (t.dataset.dup != null) { const clip = copySelection(); if (clip) pasteClip(clip); return; }
   if (sel.type === 'multi') {
     if (t.dataset.color != null) {
       const items = [...selKeys()].map(k => { const [ty, id] = splitKey(k); return ty === 'n' ? state.nodes.get(id) : ty === 'g' ? state.groups.get(id) : null; }).filter(Boolean);
@@ -3654,7 +3891,7 @@ function ctxClick(e) {
   if (!item) return;
   if (t.dataset.color != null) return setColor([item], +t.dataset.color);
   if (t.dataset.stickerRow != null) { stickerRow = stickerRow === sel.id ? null : sel.id; ctxKey = ''; renderCtx(); return; }
-  if (t.dataset.addSticker) { pushUndo(); addSticker(item, t.dataset.addSticker); commit('board', `Added ${t.dataset.addSticker} to ${item.id}`); return; }
+  if (t.dataset.addSticker) { pushUndo(); addSticker(item, t.dataset.addSticker); commit('board', `Stuck ${stkName(t.dataset.addSticker)} on ${item.id}`); return; }
   if (t.dataset.unlock != null) { pushUndo(); setProp(item, 'locked', null); commit('board', `Unlocked ${item.id}`); return; }
   if (t.dataset.talign != null) { const nx = { center: 'left', left: 'right', right: null }[P(item, 'align') || 'center']; pushUndo(); setProp(item, 'align', nx); commit('board', `Text ${nx || 'centred'}`); return; }
   if (t.dataset.hollow != null) {
@@ -3921,7 +4158,7 @@ function boardNotes() {
     if (n.shape === 'doc' && n.body) L.push(`Doc ${n.id} "${n.label}": ${n.body.replace(/\n/g, ' / ')}`);
   }
   // Stickers count as votes, so the assistant hears them.
-  const votes = [...state.nodes.values()].filter(n => P(n, 'st')).map(n => `${n.id} (${plainMarks(n.label).replace(/\n/g, ' ')}) ${Object.entries(P(n, 'st')).map(([e, c]) => `${e}${c > 1 ? `×${c}` : ''}`).join(' ')}`);
+  const votes = [...state.nodes.values(), ...state.groups.values()].filter(x => stkOf(x).length).map(x => `${x.id} (${plainMarks(x.label ?? x.title).replace(/\n/g, ' ')}) ${Object.entries(stkCounts(x)).map(([e, c]) => `${e}${c > 1 ? ` ×${c}` : ''}`).join(', ')}`);
   if (votes.length) L.push('Stickers on the board, as votes:', ...votes);
   return L.length ? `\n${L.join('\n')}\n` : '';
 }
@@ -4797,6 +5034,11 @@ $('#shape-pop').addEventListener('click', e => {
   const b = e.target.closest('[data-shape]'); if (!b) return;
   setTool('shape', b.dataset.shape); toast('Click the board to place it');
 });
+$('#sticker-pop').addEventListener('click', e => {
+  const b = e.target.closest('[data-pick-sticker]'); if (!b) return;
+  stickerPick = b.dataset.pickSticker; setTool('sticker');
+  toast(`Click a box, note or frame to stick “${stkName(stickerPick)}” on it. Esc to stop.`, 3500);
+});
 $('#icon-grid').addEventListener('click', e => { const b = e.target.closest('[data-icon]'); if (b) pickIcon(b.dataset.icon); });
 $('#icon-tabs').addEventListener('click', e => { const b = e.target.closest('[data-pack]'); if (!b) return; iconPack = b.dataset.pack; $('#icon-q').value = ''; renderIconGrid(); });
 $('#icon-q').addEventListener('input', renderIconGrid);
@@ -4807,6 +5049,9 @@ $('#icon-q').addEventListener('keydown', e => {
 $('#ctx').addEventListener('click', ctxClick);
 $('#cmenu').addEventListener('click', e => { const b = e.target.closest('[data-cm]'); if (b && !b.disabled) cmenuAct(b.dataset.cm, b); });
 $('#cmenu').addEventListener('contextmenu', e => e.preventDefault());
+$('#area-pop').addEventListener('click', e => { const b = e.target.closest('[data-area]'); if (b) makeFromArea(b.dataset.area); });
+onDoc('pointerdown', e => { if (areaRect && !e.target.closest?.('#area-pop, #board')) hideArea(); });
+svg.addEventListener('wheel', () => { if (areaRect) hideArea(); }, { passive: true });
 onDoc('pointerdown', e => { if (!e.target.closest?.('#cmenu, [data-more]')) closeCmenu(); });
 svg.addEventListener('wheel', closeCmenu, { passive: true });
 $('#tpd-grid').addEventListener('click', e => { const b = e.target.closest('[data-tpl]'); if (b) useTemplate(b.dataset.tpl); });

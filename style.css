@@ -1122,12 +1122,6 @@ g.group:active .frame-grip { cursor: grabbing; }
 .node text .rlink { fill: var(--accent); text-decoration: underline; cursor: pointer; }
 .node text .rlead { font-weight: 600; }
 :root[data-theme="dark"] .node text .rcode { fill: #f783ac; }
-/* Stickers: pills with an emoji and a count over a box's top edge. */
-.sticker { cursor: pointer; }
-.sticker rect { fill: var(--surface); stroke: var(--border); stroke-width: 1; filter: drop-shadow(0 1px 2px rgba(0, 0, 0, .12)); }
-.sticker:hover rect { stroke: var(--accent); }
-.sticker .st-e { font-size: 13px; }
-.sticker .st-n { font: 600 11.5px var(--font); fill: var(--text); }
 .ctx-stickers { position: absolute; bottom: calc(100% + 6px); right: 0; display: flex; gap: 2px; padding: 4px; background: var(--surface); border-radius: 10px; box-shadow: var(--shadow), 0 6px 20px rgba(0, 0, 0, .1); }
 .ctx-stickers button { font-size: 16px; }
 .ctx .head-start svg { transform: scaleX(-1); }
@@ -1145,3 +1139,59 @@ g.group:active .frame-grip { cursor: grabbing; }
 .cmenu .cm[disabled]:hover { background: none; }
 .cm-stickers { display: flex; gap: 1px; padding: 2px 4px; }
 .cm-stickers button { padding: 4px 5px; border-radius: 6px; font-size: 16px; }
+
+/* Stickers: die-cut emoji stuck on things. */
+.stk { cursor: grab; }
+.stk text { font-size: 26px; }
+.stk:hover { filter: brightness(1.04); }
+.stk.moving { opacity: .9; cursor: grabbing; }
+#board[data-tool="sticker"] { cursor: copy; }
+#board[data-tool="sticker"] .stk { pointer-events: none; }
+.sticker-pop { width: 248px; }
+.sticker-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 2px; padding: 2px; }
+.sticker-grid button { border: 0; background: none; font-size: 22px; height: 38px; border-radius: 8px; padding: 0; }
+.sticker-grid button:hover, .sticker-grid button[aria-pressed="true"] { background: var(--accent-soft); }
+.pop-label { font-size: 11.5px; font-weight: 600; padding: 4px 6px 6px; }
+
+/* What a tool will add, under the pointer before you click. */
+.place-ghost { opacity: .55; pointer-events: none; }
+.place-ghost.group rect { fill: color-mix(in srgb, var(--accent) 6%, transparent); stroke: var(--accent); stroke-dasharray: 6 4; }
+.place-ghost.stk text { font-size: 26px; }
+
+/* Typing into a box: the box stays in view, its own text steps aside for the editor's. */
+.editor.in-place { background: transparent; border: 1.5px dashed var(--accent); border-radius: 6px; overflow: hidden; caret-color: var(--accent); }
+.node.editing:not(.ticket) > text, .node.editing:not(.ticket) .rlead, .node.ticket.editing .ticket-title, .node.ticket.editing .ticket-meta { visibility: hidden; }
+
+/* After a drag on empty board: make something that size. */
+.area-pop { position: absolute; z-index: 15; display: flex; align-items: center; gap: 2px; padding: 4px; background: var(--surface); border-radius: 10px; box-shadow: var(--shadow), 0 6px 20px rgba(0, 0, 0, .1); }
+.area-pop[hidden] { display: none; }
+.area-pop button { height: 30px; min-width: 32px; padding: 0 7px; display: flex; align-items: center; gap: 6px; border: 0; background: none; border-radius: 6px; font: 600 12.5px var(--font); color: var(--text); }
+.area-pop button:hover { background: var(--accent-soft); }
+.area-pop svg { width: 22px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.area-pop .area-frame svg { width: 16px; }
+.area-rect { fill: color-mix(in srgb, var(--accent) 7%, transparent); stroke: var(--accent); stroke-dasharray: 5 4; vector-effect: non-scaling-stroke; pointer-events: none; }
+
+/* The highlight marker's yellow tip. */
+#rail-mark .hl-tip { fill: #ffd43b; }
+
+/* Export: each kind of file in its own colour. */
+#m-export .mi .mi-ic { background: color-mix(in srgb, var(--c, var(--accent)) 14%, var(--surface)); color: var(--c, var(--accent)); }
+#m-export [data-act="share"] { --c: #3b5bdb; }
+#m-export [data-act="mermaid"] { --c: #c2255c; }
+#m-export [data-act="png"] { --c: #2b8a3e; }
+#m-export [data-act="svg"] { --c: #e8590c; }
+#m-export [data-act="drawio"] { --c: #e67700; }
+#m-export [data-act="ado"] { --c: #1971c2; }
+#m-export [data-act="mmd"] { --c: #6741d9; }
+#m-export [data-act="folder"] { --c: #0c8599; }
+
+/* Drawn stickers in the pickers. */
+.stk-ic { width: 30px; height: 30px; display: block; }
+.sticker-grid button { height: 40px; display: grid; place-items: center; }
+.sticker-grid button:hover .stk-ic, .ctx-stickers button:hover .stk-ic, .cm-stickers button:hover .stk-ic { transform: scale(1.12) rotate(-6deg); transition: transform .12s; }
+.ctx-stickers { display: grid; grid-template-columns: repeat(6, 34px); }
+.ctx-stickers button { height: 34px; padding: 0; }
+.ctx-stickers .stk-ic { width: 26px; height: 26px; }
+.cm-stickers { display: grid; grid-template-columns: repeat(6, 1fr); }
+.cm-stickers button { padding: 2px; display: grid; place-items: center; }
+.cm-stickers .stk-ic { width: 26px; height: 26px; }
