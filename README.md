@@ -23,7 +23,7 @@ The assistant you pick is remembered. Change it at the top of the chat panel, or
 
 **Start** floats the board for you. **⧉ Float** does it later, for example on a tab that a link opened. The board moves into a small window that stays on top of every other window (Document Picture-in-Picture), so it stays in view while you work in the chat. A link tab hands its diagram to the floating board and closes itself, and the browser returns you to the chat.
 
-Keep the Kiertotie tab open (in the background is fine), because closing it closes the floating board. **Bring it back here** in that tab, or closing the floating window, puts the board back in the tab. If no floating board is open, a link tab becomes the board, and **Send** closes that tab again.
+Keep the Kiertotie tab open (in the background is fine), because closing it closes the floating board. That tab turns yellow, with arrows pointing at the floating window. **Bring it back here** in that tab, or closing the floating window, puts the board back in the tab. If no floating board is open, a link tab becomes the board, and **Send** closes that tab again.
 
 **With Copilot in the Edge sidebar** you can skip the paste in step 4: just ask. The sidebar reads the open board directly, through a hidden text description that includes the highlights and the reply rules.
 
@@ -32,7 +32,7 @@ Keep the Kiertotie tab open (in the background is fine), because closing it clos
 - The link is `#note=<the assistant's line>&m=<the whole diagram as Mermaid>`, percent-encoded, with `;` between lines. The assistant always sends the whole diagram. Boxes you moved by hand keep their place if they're still in it.
 - A shape that's missing its closing bracket at the end of the link is still read, because chat apps often cut a trailing `]` or `)` off a link.
 - If a link comes out broken, paste the diagram text anywhere on the board instead.
-- The diagram is kept in the browser. Open board tabs update each other live.
+- The diagram is kept in the browser. Open board tabs update each other live. An empty board isn't kept: it shows nowhere, and once you leave it, it's gone.
 - The **zoom bar** at the bottom right has **Tidy up** (with the flow steps), zoom out and in, the zoom level (click for 100%) and fit. **Import → Edit the Mermaid source** shows the code and a log of changes. **Clear the board** is in the Tidy up menu.
 
 ## Drawing by hand
@@ -57,7 +57,7 @@ In Mermaid, icons are `kv@{ icon: "azure:key-vaults", label: "Secrets" }`, text 
 - **Select:** drag on empty board, or inside a frame, to select everything the rectangle touches. Shift-click adds or removes items, and Ctrl+A selects all. A frame is picked up by its title bar, or by the blue move grip at the end of it.
 - **Pan:** two fingers on a trackpad, the scroll wheel, Space-drag or the middle mouse button.
 - **Several items:** move, colour, align (left, centre, right, top, middle, bottom), space evenly, put in a frame, or delete them together.
-- **Keys:** Ctrl+C / X / V copy, cut and paste, also between boards. Ctrl+D duplicates. Arrow keys nudge (Shift for 10). Ctrl+Z undoes and Ctrl+Shift+Z or Ctrl+Y redoes. V select, N note, T text, R shape, P pen, C comment, I icons, M highlight, F fit.
+- **Keys:** Ctrl+C / X / V copy, cut and paste, also between boards. Ctrl+D duplicates. Arrow keys nudge (Shift for 10). Ctrl+Z undoes and Ctrl+Shift+Z or Ctrl+Y redoes. V select, N note, T text, R shape, P pen, H highlighter, E eraser, C comment, I icons, M highlight, F fit.
 - A copied selection also lands on the clipboard as Mermaid, so you can paste part of a board into the chat.
 - **Snap to grid** and the **Minimap** are on by default; switch them off under **Style**. Alt-drag moves freely.
 
@@ -136,7 +136,7 @@ Every frame and screen is laid out on its own first, then placed in the flow as 
 
 - **Shapes** now include a table and a doc (a card with a title and longer text). Double-click a table to edit it as lines of cells split by `|`. Double-click a doc to edit its title line and text.
 - **Images:** paste a picture or drop one on the board. It's shrunk to at most 1200 pixels and kept with the board. Share links leave images out, since they would make the link too long.
-- **Pen, highlighter, arrow and eraser** are under the pencil on the rail. Ink can be selected, moved, recoloured and deleted like anything else.
+- **Pen, highlighter, arrow and eraser** are under the pencil on the rail, with a colour and a thin, medium or thick size. The pointer shows the pen's tip. Strokes are lightly smoothed, Shift draws a straight line, a click leaves a dot, and Esc drops the stroke you're drawing. The eraser removes every stroke it passes over. Ink can be selected, moved, recoloured, resized and deleted like anything else. A size other than medium is saved as `%% @ink ink1 pen:5 …`.
 - **Comments:** a numbered pin with text that shows on hover. Comments and doc text travel to the chat in the Send packet, below the diagram; tables are part of the diagram itself. Exports leave comments out.
 
 ## Files

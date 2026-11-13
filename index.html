@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Kiertotie</title>
 <meta name="description" content="A diagram board for AI chats that can only chat: the chat answers with a link, you edit, Send passes it back.">
-<link rel="stylesheet" href="style.css?v=20261105-2">
+<link rel="stylesheet" href="style.css?v=20261113-1">
 </head>
 <body>
 <div id="home" class="home" hidden>
@@ -201,6 +201,7 @@
         <button data-tool="arrow" title="Arrow: drag from where to where">Arrow</button><button data-tool="eraser" title="Eraser: drag over ink to remove it">Eraser</button>
       </div>
       <div id="draw-colors" class="draw-colors"></div>
+      <div id="draw-sizes" class="draw-sizes" role="group" aria-label="Stroke size"></div>
     </div>
     <svg id="minimap" class="minimap" viewBox="0 0 168 110" hidden aria-label="Minimap"></svg>
     <div id="zoombar" class="zoombar" role="toolbar" aria-label="View">
@@ -242,9 +243,13 @@
 </div>
 
 
-<div id="docked" class="docked" hidden>
-  <p><strong>The board is floating.</strong> Keep this tab open: closing it closes the floating board too.</p>
-  <div class="row"><button id="docked-back">Bring it back here</button><button id="docked-reset">Reset its size and place</button></div>
+<div id="docked" class="docked float-note" hidden>
+  <div class="fn-text">
+    <h2>Your board is floating.</h2>
+    <p>It's in the small window in the corner, on top of everything else.<br>Keep this tab open: closing it closes the board too.</p>
+    <div class="fn-acts"><button id="docked-back">Bring it back here</button><button id="docked-reset">Reset its size and place</button></div>
+  </div>
+  <svg id="fn-arrows" class="fn-arrows" aria-hidden="true"></svg>
 </div>
 <div id="handed" class="docked" hidden>
   <p><strong>Sent to your floating board.</strong> You can close this tab.</p>
@@ -286,6 +291,6 @@
 
 <!-- Bump ?v= on every release, so a page never pairs with a cached older script (GitHub Pages caches for 10 minutes). -->
 <script src="vendor/qrcode.js?v=1"></script>
-<script src="app.js?v=20261105-2"></script>
+<script src="app.js?v=20261113-1"></script>
 </body>
 </html>

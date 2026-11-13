@@ -288,10 +288,10 @@ function parseInto(text, { replace, keep = true }) {
       else extra(m[2], m[1] === 'doc' ? 'body' : 'src', v);
       continue;
     }
-    if ((m = line.match(/^%%\s*@ink\s+(\S+)\s+(pen|hl|arrow)\s+(#[0-9a-f]{3,8})\s+(.+)$/i))) {
-      const pts = m[4].trim().split(/\s+/).map(t => t.split(',').map(Number)).filter(q => q.length === 2 && q.every(Number.isFinite));
+    if ((m = line.match(/^%%\s*@ink\s+(\S+)\s+(pen|hl|arrow)(?::(\d+(?:\.\d+)?))?\s+(#[0-9a-f]{3,8})\s+(.+)$/i))) {
+      const pts = m[5].trim().split(/\s+/).map(t => t.split(',').map(Number)).filter(q => q.length === 2 && q.every(Number.isFinite));
       state.ink = state.ink.filter(x => x.id !== m[1]);
-      if (pts.length > 1) state.ink.push({ id: m[1], kind: m[2], color: m[3], pts });
+      if (pts.length > 1) state.ink.push({ id: m[1], kind: m[2], color: m[4], pts, ...(+m[3] > 0 && { w: +m[3] }) });
       continue;
     }
     if ((m = line.match(/^%%\s*@comment\s+(\S+)\s+(-?[\d.]+)\s+(-?[\d.]+)\s+(\S*)\s*$/))) {
@@ -496,7 +496,8 @@ function canvasLines({ images = true } = {}) {
     if (n.src && images) L.push(`%% @image ${n.id} ${enc(n.src)}`);
     if (n.sent && n.shape === 'image') L.push(`%% @sent ${n.id}`);
   }
-  for (const k of state.ink) L.push(`%% @ink ${k.id} ${k.kind} ${k.color} ${k.pts.map(([x, y]) => `${r(x)},${r(y)}`).join(' ')}`);
+  const r1 = v => Math.round(v * 10) / 10;
+  for (const k of state.ink) L.push(`%% @ink ${k.id} ${k.kind}${k.w && k.w !== INK_W[k.kind] ? `:${k.w}` : ''} ${k.color} ${k.pts.map(([x, y]) => `${r1(x)},${r1(y)}`).join(' ')}`);
   for (const c of state.comments) L.push(`%% @comment ${c.id} ${r(c.x)} ${r(c.y)} ${enc(c.text)}`);
   return L;
 }
@@ -1415,6 +1416,7 @@ function render() {
     html += `<path class="ghost${tb ? ' snapped' : ''}" d="M${s.x},${s.y} L${end.x},${end.y}"/>`;
   }
   vp.innerHTML = pics + html;
+  paintInkCursor();
   updateEmpty();
   renderCtx();
   renderMinimap();
@@ -1429,18 +1431,45 @@ function arrowFor(color) {
   return id;
 }
 
-// Pen and highlighter strokes as smooth paths, arrows as straight lines with a head.
+// Pen and highlighter strokes as smooth curves through their points (Catmull-Rom), arrows as straight lines with a head.
 function inkPath(pts) {
-  if (pts.length < 3) return `M${pts.map(q => q.join(',')).join(' L')}`;
-  let d = `M${pts[0][0]},${pts[0][1]}`;
-  for (let i = 1; i < pts.length - 1; i++) d += ` Q${pts[i][0]},${pts[i][1]} ${(pts[i][0] + pts[i + 1][0]) / 2},${(pts[i][1] + pts[i + 1][1]) / 2}`;
-  const l = pts[pts.length - 1];
-  return `${d} L${l[0]},${l[1]}`;
+  const f = q => `${Math.round(q[0] * 10) / 10},${Math.round(q[1] * 10) / 10}`;
+  if (pts.length === 1) return `M${f(pts[0])} l0.01,0`;
+  if (pts.length === 2) return `M${f(pts[0])} L${f(pts[1])}`;
+  let d = `M${f(pts[0])}`;
+  for (let i = 0; i < pts.length - 1; i++) {
+    const a = pts[i - 1] || pts[i], b = pts[i], c = pts[i + 1], e = pts[i + 2] || c;
+    d += ` C${f([b[0] + (c[0] - a[0]) / 6, b[1] + (c[1] - a[1]) / 6])} ${f([c[0] - (e[0] - b[0]) / 6, c[1] - (e[1] - b[1]) / 6])} ${f(c)}`;
+  }
+  return d;
 }
 function inkSvg(k) {
-  const d = inkPath(k.pts), on = k.id && isSel(`i:${k.id}`);
+  const d = inkPath(k.pts), on = k.id && isSel(`i:${k.id}`), w = inkW(k);
   const marker = k.kind === 'arrow' ? ` marker-end="url(#${arrowFor(k.color)})"` : '';
-  return `<g class="ink ${k.kind}${on ? ' sel' : ''}"${k.id ? ` data-ink="${esc(k.id)}"` : ''} style="--ic:${esc(k.color)}"><path class="hit" d="${d}"/><path class="stroke" d="${d}"${marker}/></g>`;
+  return `<g class="ink ${k.kind}${on ? ' sel' : ''}${k.id ? '' : ' live'}"${k.id ? ` data-ink="${esc(k.id)}"` : ''} style="--ic:${esc(k.color)};--iw:${w}"><path class="hit" d="${d}" style="stroke-width:${Math.max(14, w + 10)}"/><path class="stroke" d="${d}"${marker}/></g>`;
+}
+// The stroke being drawn is redrawn on its own while the pen moves, not the whole board.
+function paintLiveInk() {
+  const g = $('#viewport .ink.live');
+  if (!g) { render(); return; }
+  const d = inkPath(drag.ink.pts);
+  for (const el of g.querySelectorAll('path')) el.setAttribute('d', d);
+}
+// Fewer points for the same line (Ramer-Douglas-Peucker), so a saved stroke stays small.
+function simplify(pts, tol) {
+  if (pts.length < 3) return pts;
+  const keep = new Uint8Array(pts.length); keep[0] = keep[pts.length - 1] = 1;
+  const stack = [[0, pts.length - 1]];
+  while (stack.length) {
+    const [i0, i1] = stack.pop(), [ax, ay] = pts[i0], [bx, by] = pts[i1], L = Math.hypot(bx - ax, by - ay) || 1e-9;
+    let best = -1, far = tol;
+    for (let i = i0 + 1; i < i1; i++) {
+      const dd = Math.abs((bx - ax) * (ay - pts[i][1]) - (ax - pts[i][0]) * (by - ay)) / L;
+      if (dd > far) { far = dd; best = i; }
+    }
+    if (best > 0) { keep[best] = 1; stack.push([i0, best], [best, i1]); }
+  }
+  return pts.filter((_, i) => keep[i]);
 }
 // A comment is a numbered pin; its text shows on hover and while it is selected.
 function commentSvg(c, i) {
@@ -1620,20 +1649,42 @@ function initBoards() {
   if (!list.length) {
     const id = newBoardId(), old = store.get(STORE_KEY);
     if (old) store.set(boardKey(id), old);
-    list = [{ id, name: 'My board', updated: Date.now() }];
+    list = [{ id, name: 'My board', updated: Date.now(), empty: !old }];
     saveBoardList(list);
     store.del(STORE_KEY);
   }
   const cur = store.get(CURRENT_KEY);
   boardId = list.some(b => b.id === cur) ? cur : [...list].sort((a, b) => b.updated - a.updated)[0].id;
   store.set(CURRENT_KEY, boardId);
+  // Empty boards left behind earlier go. Not fresh ones: another tab may still be waiting on its chat there.
+  pruneEmpty(6 * 3600e3);
+}
+
+// Empty boards are not kept. The open one stays on the list while it is open, for its name and its chat,
+// but it shows nowhere and nothing of it is stored; once you leave it, it goes.
+const isBlank = () => !state.nodes.size && !state.groups.size && !state.ink.length && !state.comments.length;
+function entryEmpty(b) {
+  if (b.empty != null) return b.empty;
+  if (b.boxes > 0) return false;
+  // Saved before boards knew they were empty: only a bare "flowchart LR" (and a board style) counts as empty.
+  const raw = store.get(boardKey(b.id)); if (!raw) return true;
+  try { return String(JSON.parse(raw).src || '').split('\n').every(l => /^\s*$|^\s*(flowchart|graph)\b|^\s*%%\s*@theme\b/i.test(l)); } catch { return false; }
+}
+const keptBoards = () => boardList().filter(b => !entryEmpty(b));
+function pruneEmpty(olderThan = 0, only = null) {
+  const list = boardList(), now = Date.now();
+  const gone = list.filter(b => b.id !== boardId && (!only || b.id === only) && entryEmpty(b) && now - (b.updated || 0) >= olderThan);
+  if (!gone.length) return;
+  saveBoardList(list.filter(b => !gone.includes(b)));
+  for (const b of gone) { store.del(boardKey(b.id)); store.del(`kiertotie.chat.${b.id}`); }
 }
 
 function save() {
+  const empty = isBlank();
   lastSaved = JSON.stringify({ src: shareText(), pos: [...state.pos] });
-  store.set(boardKey(boardId), lastSaved);
+  if (empty) store.del(boardKey(boardId)); else store.set(boardKey(boardId), lastSaved);
   const list = boardList(), b = list.find(x => x.id === boardId);
-  const info = { updated: Date.now(), boxes: state.nodes.size };
+  const info = { updated: Date.now(), boxes: state.nodes.size, empty };
   if (b) Object.assign(b, info); else list.push({ id: boardId, name: 'Untitled board', ...info });
   saveBoardList(list);
   paintBoardName();
@@ -1652,8 +1703,11 @@ function load() {
 
 // Open another board: this one is already saved, so only the view and the undo history start afresh.
 function openBoard(id) {
+  const left = boardId, leftEmpty = isBlank();
   boardId = id;
   store.set(CURRENT_KEY, id);
+  // The board you leave goes if there is nothing on it.
+  if (left && left !== id && leftEmpty) pruneEmpty(0, left);
   parseInto('flowchart LR', { replace: true, keep: false }); state.pos.clear();
   load();
   undoStack.length = 0; sel = null; started = false; landingOff = false; lastSent = null; showNote('');
@@ -1662,7 +1716,7 @@ function openBoard(id) {
 }
 function createBoard(name = 'Untitled board', text = null) {
   const id = newBoardId();
-  saveBoardList([...boardList(), { id, name, updated: Date.now(), boxes: 0 }]);
+  saveBoardList([...boardList(), { id, name, updated: Date.now(), boxes: 0, empty: true }]);
   openBoard(id);
   if (text) { applyText(text, 'template'); undoStack.length = 0; }
   return id;
@@ -1698,7 +1752,7 @@ const ago = t => {
   return s < 60 ? 'just now' : s < 3600 ? `${Math.round(s / 60)} min ago` : s < 86400 ? `${Math.round(s / 3600)} h ago` : new Date(t).toLocaleDateString();
 };
 function paintBoards() {
-  const list = boardList().sort((a, b) => b.updated - a.updated);
+  const list = keptBoards().sort((a, b) => b.updated - a.updated);
   $('#boards-list').innerHTML = list.map(b => `<li class="board-row${b.id === boardId ? ' current' : ''}" data-board="${esc(b.id)}">
     <button class="board-open" data-bact="open"><strong>${esc(b.name)}</strong><span class="muted small">${b.id === boardId ? 'Open now · ' : ''}${b.boxes != null ? `${b.boxes} boxes · ` : ''}${ago(b.updated)}</span></button>
     <button data-bact="rename" title="Rename">Rename</button><button data-bact="copy" title="Duplicate">Duplicate</button><button data-bact="delete" title="Delete">Delete</button></li>`).join('');
@@ -1805,7 +1859,7 @@ function selectionItems(keys = selKeys()) {
   return { nodes, groups, ink, comments };
 }
 
-const inkBox = k => { const xs = k.pts.map(q => q[0]), ys = k.pts.map(q => q[1]); const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys); return { x: (x0 + x1) / 2, y: (y0 + y1) / 2, w: x1 - x0 + 4, h: y1 - y0 + 4 }; };
+const inkBox = k => { const xs = k.pts.map(q => q[0]), ys = k.pts.map(q => q[1]); const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys), m = inkW(k) + 2; return { x: (x0 + x1) / 2, y: (y0 + y1) / 2, w: x1 - x0 + m, h: y1 - y0 + m }; };
 const commentBox = c => ({ x: c.x, y: c.y, w: 24, h: 24 });
 // The bounding box of some keys, in board coordinates.
 function keysBox(keys) {
@@ -1868,10 +1922,12 @@ svg.addEventListener('pointerdown', e => {
     svg.setPointerCapture(e.pointerId); return;
   }
   if (!markMode && (tool === 'pen' || tool === 'hl' || tool === 'arrow')) {
-    drag = { kind: 'ink', snap: snapshot(), ink: { id: null, kind: tool, color: tool === 'hl' ? hlColor : penColor, pts: [[p.x, p.y], [p.x, p.y]] } };
-    svg.setPointerCapture(e.pointerId); return;
+    e.preventDefault();
+    const w = tool === 'hl' ? hlSize : penSize;
+    drag = { kind: 'ink', snap: snapshot(), at: [p.x, p.y], sm: [p.x, p.y], ink: { id: null, kind: tool, color: tool === 'hl' ? hlColor : penColor, pts: tool === 'arrow' ? [[p.x, p.y], [p.x, p.y]] : [[p.x, p.y]], ...(w !== INK_W[tool] && { w }) } };
+    render(); svg.setPointerCapture(e.pointerId); return;
   }
-  if (!markMode && tool === 'eraser') { drag = { kind: 'erase', snap: snapshot(), hit: false }; eraseAt(e); svg.setPointerCapture(e.pointerId); return; }
+  if (!markMode && tool === 'eraser') { drag = { kind: 'erase', snap: snapshot(), hit: false, last: [e.clientX, e.clientY] }; eraseAt(e.clientX, e.clientY); svg.setPointerCapture(e.pointerId); return; }
   if (!markMode && tool === 'comment') { e.preventDefault(); placeComment(p); return; }
   if (tool !== 'select' && !markMode) { e.preventDefault(); placeItem(tool, p); return; }
   let key = keyAt(e.target) || 'empty';
@@ -1952,13 +2008,19 @@ function addPiece(kind) {
   commit('board', `Added ${UI_KINDS[kind].name.toLowerCase()}${gid ? ` to ${state.groups.get(gid).title}` : ''}`);
 }
 
-function eraseAt(e) {
-  const k = keyAt(doc().elementFromPoint(e.clientX, e.clientY) || svg);
+// The eraser removes every stroke it passes over, also between two pointer events when it moves fast.
+function eraseAt(x, y) {
+  const k = keyAt(doc().elementFromPoint(x, y) || svg);
   if (!k || !k.startsWith('i:')) return;
   const id = splitKey(k)[1];
   if (!drag.hit) { pushUndo(drag.snap); drag.hit = true; }
   state.ink = state.ink.filter(x => x.id !== id);
   render();
+}
+function eraseAlong(e) {
+  const [x0, y0] = drag.last, n = Math.max(1, Math.ceil(Math.hypot(e.clientX - x0, e.clientY - y0) / 4));
+  for (let i = 1; i <= n; i++) eraseAt(x0 + (e.clientX - x0) * i / n, y0 + (e.clientY - y0) * i / n);
+  drag.last = [e.clientX, e.clientY];
 }
 
 svg.addEventListener('pointermove', e => {
@@ -1966,12 +2028,23 @@ svg.addEventListener('pointermove', e => {
   if (drag.kind === 'pan') { view.x = drag.vx + e.clientX - drag.sx; view.y = drag.vy + e.clientY - drag.sy; moveView(); return; }
   const p = toWorld(e);
   if (drag.kind === 'connect') { drag.to = p; drag.target = connectTarget(p, drag.from); render(); return; }
-  if (drag.kind === 'erase') { eraseAt(e); return; }
+  if (drag.kind === 'erase') { eraseAlong(e); return; }
   if (drag.kind === 'ink') {
-    const pts = drag.ink.pts, last = pts[pts.length - 1];
-    if (drag.ink.kind === 'arrow') pts[1] = [p.x, p.y];
-    else if (Math.hypot(p.x - last[0], p.y - last[1]) * view.k > 2) pts.push([p.x, p.y]);
-    render(); return;
+    const k = drag.ink;
+    drag.at = [p.x, p.y];
+    if (k.kind === 'arrow') k.pts[1] = [p.x, p.y];
+    // Shift draws a straight line from where the stroke started.
+    else if (e.shiftKey) { k.pts = [k.pts[0], [p.x, p.y]]; drag.sm = [p.x, p.y]; }
+    else {
+      // Every point the pointer reported, lightly smoothed, so the line follows the hand without the jitter.
+      const evs = e.getCoalescedEvents?.() || [];
+      for (const ev of evs.length ? evs : [e]) {
+        const q = toWorld(ev), last = k.pts[k.pts.length - 1];
+        drag.sm = [drag.sm[0] + (q.x - drag.sm[0]) * 0.55, drag.sm[1] + (q.y - drag.sm[1]) * 0.55];
+        if (Math.hypot(drag.sm[0] - last[0], drag.sm[1] - last[1]) * view.k > 1.2) k.pts.push([...drag.sm]);
+      }
+    }
+    paintLiveInk(); return;
   }
   if (drag.kind === 'marquee') {
     Object.assign(drag, { x1: p.x, y1: p.y });
@@ -2021,8 +2094,18 @@ svg.addEventListener('pointerup', e => {
   if (d.kind === 'marquee') { render(); return; }
   if (d.kind === 'erase') { if (d.hit) commit('board', 'Erased ink'); return; }
   if (d.kind === 'ink') {
-    const k = d.ink, b = inkBox(k);
-    if (Math.max(b.w, b.h) * view.k < 6) { render(); return; }
+    const k = d.ink;
+    if (k.kind !== 'arrow') {
+      // The smoothing trails the pointer a little: the stroke ends where the pointer let go.
+      const last = k.pts[k.pts.length - 1];
+      if (Math.hypot(d.at[0] - last[0], d.at[1] - last[1]) * view.k > 0.5) k.pts.push(d.at);
+      k.pts = simplify(k.pts, 0.35 / view.k);
+      // A click without moving leaves a dot.
+      if (k.pts.length < 2) k.pts = [k.pts[0], [k.pts[0][0] + 0.1, k.pts[0][1]]];
+    } else {
+      const b = inkBox(k);
+      if (Math.max(b.w - inkW(k), b.h - inkW(k)) * view.k < 6) { render(); return; }
+    }
     pushUndo(d.snap);
     k.id = freeInkId();
     state.ink.push(k);
@@ -2121,6 +2204,7 @@ function setTool(t, shape) {
   for (const b of doc().querySelectorAll('#rail [data-tool]')) b.setAttribute('aria-pressed', String(b.dataset.tool === t));
   svg.classList.toggle('placing', t !== 'select');
   svg.dataset.tool = t;
+  paintInkCursor();
   for (const b of doc().querySelectorAll('#rail [data-pop="draw"]')) b.setAttribute('aria-pressed', String(['pen', 'hl', 'arrow', 'eraser'].includes(t)));
   closePops();
 }
@@ -2298,6 +2382,26 @@ function addImage(file, p) {
 let penColor = '#1a1a1a', hlColor = '#ffd43b';
 const INK_COLORS = ['#1a1a1a', '#e03131', '#4262ff', '#2f9e44', '#f08c00', '#7048e8'];
 const HL_COLORS = ['#ffd43b', '#69db7c', '#74c0fc', '#f783ac', '#ffa94d'];
+// Stroke widths: thin, medium (the default, written without a width) and thick. Arrows take the pen's.
+const INK_W = { pen: 2.5, arrow: 2.5, hl: 16 };
+const INK_SIZES = { pen: [1.5, 2.5, 5], hl: [8, 16, 28] };
+const inkW = k => k.w || INK_W[k.kind] || 2.5;
+let penSize = 2.5, hlSize = 16;
+// The pointer shows the pen's tip at its size and colour, and the eraser as a ring.
+let inkCursor = '';
+function paintInkCursor() {
+  let url = '';
+  if (['pen', 'hl', 'eraser'].includes(tool)) {
+    const hl = tool === 'hl', er = tool === 'eraser';
+    const d = er ? 16 : Math.max(4, Math.min(44, (hl ? hlSize : penSize) * view.k)), S = Math.ceil(d + 6), c = S / 2;
+    const dot = er ? `<circle cx="${c}" cy="${c}" r="${d / 2}" fill="rgba(255,255,255,.6)" stroke="#1a1a1a" stroke-width="1.2"/>`
+      : `<circle cx="${c}" cy="${c}" r="${d / 2 + 1}" fill="#fff" opacity=".85"/><circle cx="${c}" cy="${c}" r="${d / 2}" fill="${hl ? hlColor : penColor}"${hl ? ' fill-opacity=".55"' : ''} stroke="#1a1a1a" stroke-opacity=".35" stroke-width=".8"/>`;
+    url = `url("data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="${S}" height="${S}">${dot}</svg>`)}") ${Math.round(c)} ${Math.round(c)}, crosshair`;
+  }
+  if (url === inkCursor) return;
+  inkCursor = url;
+  if (url) svg.style.setProperty('--ink-cursor', url); else svg.style.removeProperty('--ink-cursor');
+}
 function freeInkId() { let k = state.ink.length + 1; while (state.ink.some(x => x.id === `ink${k}`)) k++; return `ink${k}`; }
 function placeComment(p) {
   setTool('select');
@@ -2436,6 +2540,7 @@ onDoc('keydown', e => {
   }
   else if (e.key === ' ' && !e.repeat) { e.preventDefault(); spaceDown = true; svg.classList.add('panning'); }
   else if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); deleteSelection(); }
+  else if (e.key === 'Escape' && drag?.kind === 'ink') { drag = null; render(); }
   else if (e.key === 'Escape') { select(null); setTool('select'); if (markMode) setMarkMode(false); }
   else if (mod || e.altKey) return;
   else if (e.key.toLowerCase() === 'm') setMarkMode(!markMode);
@@ -2447,6 +2552,8 @@ onDoc('keydown', e => {
   else if (e.key.toLowerCase() === 'r') setTool('shape', 'box');
   else if (e.key.toLowerCase() === 'i') openPop('icon');
   else if (e.key.toLowerCase() === 'p') setTool('pen');
+  else if (e.key.toLowerCase() === 'h') setTool('hl');
+  else if (e.key.toLowerCase() === 'e') setTool('eraser');
   else if (e.key.toLowerCase() === 'c') setTool('comment');
 });
 onDoc('keyup', e => { if (e.key === ' ') { spaceDown = false; svg.classList.remove('panning'); } });
@@ -2871,6 +2978,8 @@ function openTemplates() {
 function useTemplate(id) {
   const t = TEMPLATES.find(x => x.id === id); if (!t) return;
   closePops(); if ($('#boards').open) $('#boards').close(); if ($('#tpl-dialog').open) $('#tpl-dialog').close();
+  // From home: the board comes into view first, so the template lands where you can see it and fits the view.
+  if (homeOpen) showHome(false);
   if (!state.nodes.size && !state.groups.size) {
     applyText(t.code, 'template');
     if (/^(Untitled board|My board)$/.test(currentBoard().name)) renameBoard(boardId, t.name);
@@ -2968,8 +3077,10 @@ function renderCtx() {
   } else if (sel.type === 'ink') {
     const k = state.ink.find(x => x.id === sel.id); if (!k) { el.hidden = true; return; }
     b = inkBox(k);
-    const list = k.kind === 'hl' ? HL_COLORS : INK_COLORS;
-    html = sw(list, list.indexOf(k.color), 'data-icolor') + `<span class="ctx-sep"></span>${del}`;
+    const list = k.kind === 'hl' ? HL_COLORS : INK_COLORS, sizes = INK_SIZES[k.kind === 'hl' ? 'hl' : 'pen'];
+    html = sw(list, list.indexOf(k.color), 'data-icolor') + '<span class="ctx-sep"></span>' +
+      sizes.map((v, i) => `<button class="size-dot" data-isize="${v}" aria-pressed="${v === inkW(k)}" title="${['Thin', 'Medium', 'Thick'][i]}"><i style="--d:${[4, 8, 13][i]}px;--sw:${k.color}"></i></button>`).join('') +
+      `<span class="ctx-sep"></span>${del}`;
   } else if (sel.type === 'comment') {
     const c = state.comments.find(x => x.id === sel.id); if (!c) { el.hidden = true; return; }
     b = commentBox(c);
@@ -3051,7 +3162,9 @@ function ctxClick(e) {
     return;
   }
   if (sel.type === 'ink') {
-    const k = state.ink.find(x => x.id === sel.id); if (!k || t.dataset.icolor == null) return;
+    const k = state.ink.find(x => x.id === sel.id); if (!k) return;
+    if (t.dataset.isize != null) { pushUndo(); k.w = +t.dataset.isize; if (k.w === INK_W[k.kind]) delete k.w; commit('board', 'Changed the stroke size'); return; }
+    if (t.dataset.icolor == null) return;
     pushUndo(); k.color = (k.kind === 'hl' ? HL_COLORS : INK_COLORS)[+t.dataset.icolor]; commit('board', 'Recoloured ink'); return;
   }
   if (sel.type === 'comment') { if (t.dataset.editComment != null) openEditor({ type: 'comment', id: sel.id }); return; }
@@ -3565,6 +3678,7 @@ async function floatBoard(opts = {}) {
   for (const el of [...document.body.children]) if (el.tagName !== 'SCRIPT' && !['readout', 'docked', 'handed'].includes(el.id)) w.document.body.append(el);
   pipWin = w;
   document.getElementById('docked').hidden = false;
+  floatArrows(true);
   for (const [type, fn] of docListeners) w.document.addEventListener(type, fn);
   w.addEventListener('resize', () => render());
   w.addEventListener('pagehide', dockBoard, { once: true });
@@ -3580,7 +3694,63 @@ function dockBoard() {
   for (const el of [...w.document.body.children]) document.body.insertBefore(el, anchor);
   pipWin = null;
   anchor.hidden = true;
+  floatArrows(false);
   updateFloatUI(); render(); fit(); setTimeout(fit, 150); scrollChat();
+}
+// The tab left behind points at the floating board: hand-drawn arrows from the message to the floating window,
+// where the browser says it is, or else to the bottom-right corner, where it opens. Redrawn when either moves.
+let arrowTimer = 0, arrowKey = '';
+function floatArrows(on) {
+  clearInterval(arrowTimer); arrowKey = '';
+  if (on) { paintFloatArrows(); arrowTimer = setInterval(paintFloatArrows, 700); }
+}
+window.addEventListener('resize', () => { if (pipWin) paintFloatArrows(); });
+function floatTarget(W, H) {
+  try {
+    const vx = window.screenX + (window.outerWidth - window.innerWidth) / 2, vy = window.screenY + (window.outerHeight - window.innerHeight);
+    const r = { x: pipWin.screenX - vx, y: pipWin.screenY - vy, w: pipWin.outerWidth, h: pipWin.outerHeight };
+    if (r.w > 80 && r.x > W * 0.25 && r.x < W - 40 && r.y > -r.h + 60 && r.y < H - 40) return r;
+  } catch { /* the browser keeps it to itself */ }
+  const w = Math.min(420, W * 0.4), h = Math.min(500, H * 0.62);
+  return { x: W - w - 16, y: H - h - 16, w, h };
+}
+function paintFloatArrows() {
+  const el = document.getElementById('fn-arrows'), text = document.querySelector('#docked .fn-text');
+  if (!el || !text || document.getElementById('docked').hidden) return;
+  const W = window.innerWidth, H = window.innerHeight, t = text.getBoundingClientRect(), f = floatTarget(W, H);
+  const key = [W, H, f.x, f.y, f.w, f.h, t.right, t.bottom].map(Math.round).join(',');
+  if (key === arrowKey) return;
+  const first = !arrowKey; arrowKey = key;
+  // A wobble that stays the same between redraws.
+  let seed = 7; const rnd = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647 - 0.5; };
+  const gap = 22, arrows = [
+    { a: [t.right + 18, t.top + t.height * 0.42], b: [f.x - gap, f.y - gap * 0.6], bend: -0.28, w: 3.2 },
+    { a: [t.left + Math.min(t.width * 0.4, 160), t.bottom + 26], b: [f.x - gap, f.y + Math.min(f.h * 0.4, H - f.y - 40)], bend: 0.3, w: 2.8 },
+    { a: [t.right - 30, t.top - 4], b: [f.x + f.w * 0.32, f.y - gap], bend: -0.22, w: 2.4 },
+  ];
+  let out = '', n = 0;
+  for (const { a, b, bend, w } of arrows) {
+    const dx = b[0] - a[0], dy = b[1] - a[1], len = Math.hypot(dx, dy);
+    if (len < 90 || dx < 30 || b[1] > H - 10 || a[1] < 10) continue;
+    const c = [(a[0] + b[0]) / 2 - dy * bend, (a[1] + b[1]) / 2 + dx * bend];
+    const pts = [];
+    for (let i = 0; i <= 16; i++) {
+      const u = i / 16, v = 1 - u, j = i && i < 16 ? Math.min(3, len / 120) : 0;
+      pts.push([v * v * a[0] + 2 * v * u * c[0] + u * u * b[0] + rnd() * j, v * v * a[1] + 2 * v * u * c[1] + u * u * b[1] + rnd() * j]);
+    }
+    // The head follows the line's last stretch, two strokes like a quick pen.
+    const ang = Math.atan2(b[1] - c[1], b[0] - c[0]), hl = Math.max(14, Math.min(24, len * 0.09));
+    const wing = s => { const q = ang + Math.PI + s * (0.5 + rnd() * 0.12); return [b[0] + Math.cos(q) * hl, b[1] + Math.sin(q) * hl]; };
+    const l = wing(1), r = wing(-1), mid = (p, k) => [(p[0] + b[0]) / 2 + rnd() * k, (p[1] + b[1]) / 2 + rnd() * k];
+    const head = `M${l.map(Math.round)} Q${mid(l, 2).map(Math.round)} ${b.map(Math.round)} Q${mid(r, 2).map(Math.round)} ${r.map(Math.round)}`;
+    const shifted = pts.map(([x, y], i) => [x + (i ? rnd() * 1.6 : 0.8), y + (i ? rnd() * 1.6 : 0.8)]);
+    const anim = d => first ? ` style="animation-delay:${d}s"` : ' style="animation:none;stroke-dashoffset:0"';
+    out += `<path class="fn-a" pathLength="1" d="${inkPath(pts)}" stroke-width="${w}"${anim(n * 0.2)}/>` +
+      `<path class="fn-a" pathLength="1" d="${inkPath(shifted)}" stroke-width="${w * 0.45}" opacity=".55"${anim(n * 0.2 + 0.1)}/>` +
+      `<path class="fn-a" pathLength="1" d="${head}" stroke-width="${w}"${anim(n * 0.2 + 0.5)}/>`;
+    n++;
+  }
+  el.innerHTML = out;
 }
 // Moving the chat to another window resets its scroll: back to the newest message.
 function scrollChat() { const go = () => { const l = $('#chat-log'); if (l) l.scrollTop = l.scrollHeight; }; go(); requestAnimationFrame(go); setTimeout(go, 200); }
@@ -3778,7 +3948,7 @@ async function saveToFolder() {
   try { dir = await w.showDirectoryPicker({ mode: 'readwrite', id: 'kiertotie' }); } catch { return; }
   save();
   let count = 0;
-  for (const b of boardList()) {
+  for (const b of keptBoards()) {
     let text = '';
     try { text = JSON.parse(store.get(boardKey(b.id))).src; } catch { continue; }
     const fh = await dir.getFileHandle(`${safeName(b.name)}.mmd`, { create: true });
@@ -3861,7 +4031,7 @@ function showHome(on) {
   if (on) { closeMore(); closePops(); setHomeStep(picturesToSend({ all: true }).length ? 'ask' : 'pick'); paintHome(); }
   else { render(); }
 }
-const homeBoards = () => boardList().filter(b => b.boxes > 0 || b.id === boardId).sort((a, b) => b.updated - a.updated);
+const homeBoards = () => keptBoards().sort((a, b) => b.updated - a.updated);
 function paintHome() {
   $('#land-ideas').innerHTML = IDEAS.map(([t, q]) => `<button type="button" class="idea" data-idea="${esc(q)}">${esc(t)}</button>`).join('');
   paintAi(); paintPicChips(); paintShelf();
@@ -3869,14 +4039,15 @@ function paintHome() {
 // The shelf under the hero: your boards, or templates. Boards first once there is one worth showing.
 function paintShelf() {
   const boards = homeBoards();
-  if (!shelfPicked) shelf = boards.some(b => b.boxes > 0) ? 'boards' : 'templates';
+  if (!shelfPicked) shelf = boards.length ? 'boards' : 'templates';
   for (const b of $('#shelf-seg').querySelectorAll('[data-shelf]')) b.setAttribute('aria-pressed', String(b.dataset.shelf === shelf));
   $('#shelf-seg [data-shelf="boards"]').textContent = `Your boards${boards.length ? ` · ${boards.length}` : ''}`;
   $('#start-template').hidden = shelf !== 'templates';
   $('#shelf-cards').innerHTML = shelf === 'templates' ? TEMPLATES.slice(0, 6).map(tplCard).join('')
     : boards.map(b => `<div class="board-card${b.id === boardId ? ' current' : ''}" data-board="${b.id}">
     <button type="button" class="tpd-card" data-open="${b.id}"><span class="tpd-thumb" data-thumb="${b.id}"></span><b>${esc(b.name)}</b><small>${b.boxes ? `${b.boxes} boxes · ` : ''}${ago(b.updated)}</small></button>
-    <span class="bc-acts"><button type="button" data-bact="rename" title="Rename">${glyphPath('<path d="M4 16 L5 12 L13.5 3.5 L16.5 6.5 L8 15 Z"/>')}</button><button type="button" data-bact="copy" title="Duplicate">${glyphPath('<path d="M7 3 H15 V14 H7 Z M5 6 V17 H13"/>')}</button><button type="button" data-bact="delete" title="Delete">${glyphPath('<path d="M3.5 5.5 H16.5 M8 5.5 V3.5 H12 V5.5 M5.5 5.5 L6.3 16.5 H13.7 L14.5 5.5"/>')}</button></span></div>`).join('');
+    <span class="bc-acts"><button type="button" data-bact="rename" title="Rename">${glyphPath('<path d="M4 16 L5 12 L13.5 3.5 L16.5 6.5 L8 15 Z"/>')}</button><button type="button" data-bact="copy" title="Duplicate">${glyphPath('<path d="M7 3 H15 V14 H7 Z M5 6 V17 H13"/>')}</button><button type="button" data-bact="delete" title="Delete">${glyphPath('<path d="M3.5 5.5 H16.5 M8 5.5 V3.5 H12 V5.5 M5.5 5.5 L6.3 16.5 H13.7 L14.5 5.5"/>')}</button></span></div>`).join('')
+      || '<p class="muted shelf-empty">No boards yet. Boards with something on them show up here.</p>';
   // After home is on screen, so it opens at once.
   setTimeout(() => { if (homeOpen) fillThumbs($('#home')); }, 60);
 }
@@ -3948,7 +4119,7 @@ $('#home').addEventListener('click', e => {
   if (e.target.closest('#first-attach')) { $('#home-file').click(); return; }
   if (sh) { shelf = sh.dataset.shelf; shelfPicked = true; paintShelf(); return; }
   if (idea) { $('#first').value = idea.dataset.idea; $('#first').focus(); }
-  if (t) { useTemplate(t.dataset.tpl); showHome(false); }
+  if (t) useTemplate(t.dataset.tpl);
   if (o) { if (o.dataset.open !== boardId) openBoard(o.dataset.open); showHome(false); }
   if (act) {
     const id = act.closest('[data-board]').dataset.board, w = pipWin || window, name = boardList().find(x => x.id === id)?.name || '';
@@ -4155,13 +4326,17 @@ $('#screen-pop').addEventListener('click', e => {
   if (pc) addPiece(pc.dataset.piece);
 });
 $('#draw-pop').addEventListener('click', e => {
-  const t = e.target.closest('[data-tool]'), c = e.target.closest('[data-pen-color]');
+  const t = e.target.closest('[data-tool]'), c = e.target.closest('[data-pen-color]'), z = e.target.closest('[data-pen-size]');
   if (t) { setTool(t.dataset.tool); paintDrawColors(); $('#draw-pop').hidden = false; return; }
-  if (c) { if (tool === 'hl') hlColor = c.dataset.penColor; else penColor = c.dataset.penColor; if (!['pen', 'hl'].includes(tool)) setTool('pen'); paintDrawColors(); $('#draw-pop').hidden = false; }
+  if (z) { if (!['pen', 'hl', 'arrow'].includes(tool)) setTool('pen'); if (tool === 'hl') hlSize = +z.dataset.penSize; else penSize = +z.dataset.penSize; paintInkCursor(); paintDrawColors(); $('#draw-pop').hidden = false; return; }
+  if (c) { if (tool === 'hl') hlColor = c.dataset.penColor; else penColor = c.dataset.penColor; if (!['pen', 'hl', 'arrow'].includes(tool)) setTool('pen'); paintInkCursor(); paintDrawColors(); $('#draw-pop').hidden = false; }
 });
 function paintDrawColors() {
   const list = tool === 'hl' ? HL_COLORS : INK_COLORS, cur = tool === 'hl' ? hlColor : penColor;
   $('#draw-colors').innerHTML = list.map(c => `<button class="swatch" data-pen-color="${c}" aria-pressed="${c === cur}" style="--sw:${c}" title="${c}"></button>`).join('');
+  const hl = tool === 'hl', sizes = INK_SIZES[hl ? 'hl' : 'pen'], size = hl ? hlSize : penSize;
+  $('#draw-sizes').innerHTML = sizes.map((v, i) => `<button class="size-dot" data-pen-size="${v}" aria-pressed="${v === size}" title="${['Thin', 'Medium', 'Thick'][i]}"><i style="--d:${[4, 8, 13][i]}px;--sw:${cur}${hl ? ';opacity:.6' : ''}"></i></button>`).join('');
+  $('#draw-sizes').hidden = tool === 'eraser'; $('#draw-colors').hidden = tool === 'eraser';
   for (const b of doc().querySelectorAll('#draw-pop [data-tool]')) b.setAttribute('aria-pressed', String(b.dataset.tool === tool));
 }
 $('#minimap').addEventListener('pointerdown', e => {
