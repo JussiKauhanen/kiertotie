@@ -58,11 +58,24 @@ In Mermaid, icons are `kv@{ icon: "azure:key-vaults", label: "Secrets" }`, text 
 ## Editing
 
 - **Select:** drag on empty board, or inside a frame, to select everything the rectangle touches. Shift-click adds or removes items, and Ctrl+A selects all. A frame is picked up by its title bar, or by the blue move grip at the end of it.
-- **Pan:** two fingers on a trackpad, the scroll wheel, Space-drag or the middle mouse button.
+- **Pan:** two fingers on a trackpad, the scroll wheel, right-drag, Space-drag or the middle mouse button.
 - **Several items:** move, colour, align (left, centre, right, top, middle, bottom), space evenly, put in a frame, or delete them together.
 - **Keys:** Ctrl+C / X / V copy, cut and paste, also between boards. Ctrl+D duplicates. Arrow keys nudge (Shift for 10). Ctrl+Z undoes and Ctrl+Shift+Z or Ctrl+Y redoes. V select, N note, T text, R shape, P pen, H highlighter, E eraser, C comment, I icons, M highlight, F fit.
 - A copied selection also lands on the clipboard as Mermaid, so you can paste part of a board into the chat.
 - **Snap to grid** and the **Minimap** are on by default; switch them off under **Style**. Alt-drag moves freely.
+
+## Whiteboard tools
+
+- **Text marks:** in boxes, notes and text, `**bold**`, `*italic*`, `` `code` ``, `[label](https://…)`, and lines starting `- ` or `1. ` as lists. While editing, Ctrl+B, Ctrl+I, Ctrl+E (code) and Ctrl+K (link) put the marks around what is selected. Ctrl-click (⌘-click) a link to open it. The text size picker names Small, Body, Large, Title and Huge, and the toolbar's align button goes left, right and back to centre.
+- **More shapes:** input / output (`[/…/]`), document, queue and cloud, in Shapes and in the toolbar's shape list. In Mermaid they're `@{ shape: doc }`, `h-cyl` and `cloud`. The toolbar's dashed square makes a shape outline only (`style id fill:none`).
+- **Stickers:** the toolbar's smiley (or the right-click menu) adds an emoji to a box. They count, so a board can vote: click a sticker to add one, Alt-click to take one off. The votes go to the assistant with your next request.
+- **Line ends:** a selected line's toolbar sets each end to none, an arrow or a circle; the line style buttons are solid, dashed and thick. Drag a line's end onto empty board and it ends there, still held by the other box. Drag that free end back onto a box and it's a line between boxes again. The Draw → Arrow tool works the same way: from a box it stays on the box, and from a box to a box it makes a real link.
+- **Right-click menu:** right-click (without dragging) for cut, copy, duplicate, paste here, front and back, group, lock, stickers and delete, or on empty board to add a note, text, box or frame there. The toolbar's ⋯ opens it too. Right-drag pans.
+- **Group:** Ctrl+G groups the selection, so a click on one picks them all and they move together; Ctrl+Shift+G ungroups.
+- **Lock:** Ctrl+Shift+L. A locked thing can't be moved, resized, edited, erased or deleted, and drag-select passes it by. Its toolbar's lock button unlocks it.
+- **Front and back:** Ctrl+] and Ctrl+[.
+
+All of these are saved as `%% @props n:id {…}` and `%% @heads` canvas lines, so the Mermaid the assistant sees stays plain, and they stay when the assistant redraws the diagram.
 
 ## Architecture
 

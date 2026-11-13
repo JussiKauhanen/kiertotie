@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Kiertotie</title>
 <meta name="description" content="A diagram board for AI chats that can only chat: the chat answers with a link, you edit, Send passes it back.">
-<link rel="stylesheet" href="style.css?v=20261113-1">
+<link rel="stylesheet" href="style.css?v=20261113-2">
 </head>
 <body>
 <div id="home" class="home" hidden>
@@ -175,6 +175,10 @@
       <button data-shape="diamond" title="Decision"><svg viewBox="0 0 28 20"><path d="M14 1.5 L25 10 L14 18.5 L3 10 Z"/></svg></button>
       <button data-shape="cylinder" title="Database"><svg viewBox="0 0 28 20"><path d="M7 4.5 C7 2, 21 2, 21 4.5 V15.5 C21 18, 7 18, 7 15.5 Z M7 4.5 C7 7, 21 7, 21 4.5"/></svg></button>
       <button data-shape="hexagon" title="Hexagon"><svg viewBox="0 0 28 20"><path d="M7 3 H21 L26 10 L21 17 H7 L2 10 Z"/></svg></button>
+      <button data-shape="lean" title="Input / output"><svg viewBox="0 0 28 20"><path d="M7 3 H26 L21 17 H2 Z"/></svg></button>
+      <button data-shape="document" title="Document"><svg viewBox="0 0 28 20"><path d="M3 3 H25 V15 C19 19, 11 12, 3 16 Z"/></svg></button>
+      <button data-shape="queue" title="Queue"><svg viewBox="0 0 28 20"><path d="M6 3 H22 A4 7 0 0 1 22 17 H6 A4 7 0 0 1 6 3 Z M22 3 A4 7 0 0 0 22 17"/></svg></button>
+      <button data-shape="cloud" title="Cloud"><svg viewBox="0 0 28 20"><path d="M8 17 C3 17, 2.5 11.5, 6.5 10.5 C5.5 6, 10.5 3.5, 13 6.5 C14.5 2.5, 22 3.5, 21 8.5 C25.5 8.5, 26 17, 20.5 17 Z"/></svg></button>
       <button data-shape="table" title="Table"><svg viewBox="0 0 28 20"><rect x="3" y="3" width="22" height="14" rx="1.5"/><path d="M3 8 H25 M3 12.5 H25 M11 3 V17 M18 3 V17"/></svg></button>
       <button data-shape="doc" title="Doc: a card with longer text"><svg viewBox="0 0 28 20"><path d="M7 2 H18 L22 6 V18 H7 Z M10 8 H18 M10 11 H19 M10 14 H16"/></svg></button>
       <button data-shape="story" title="Ticket: an Azure DevOps style work item"><svg viewBox="0 0 28 20"><rect x="3" y="3" width="22" height="14" rx="2"/><path d="M5 3 V17" stroke-width="3"/><path d="M9 8 H21 M9 12 H17"/></svg></button>
@@ -224,8 +228,9 @@
       <button id="zoom-fit" class="zb-ic" title="Fit to screen (Shift+1)" aria-label="Fit to screen"><svg class="ic" viewBox="0 0 20 20"><path d="M3.5 7.5 V3.5 H7.5 M12.5 3.5 H16.5 V7.5 M16.5 12.5 V16.5 H12.5 M7.5 16.5 H3.5 V12.5"/></svg></button>
     </div>
     <div id="ctx" class="ctx" hidden role="toolbar" aria-label="Selection"></div>
+    <div id="cmenu" class="menu cmenu" hidden role="menu" aria-label="Board menu"></div>
 
-    <p class="hint">Drag to select · Space-drag or two fingers to pan · drag a dot to connect · Double-click to edit</p>
+    <p class="hint">Drag to select · Right-drag, Space-drag or two fingers to pan · drag a dot to connect · Double-click to edit</p>
   </section>
 
   <aside class="panel">
@@ -291,6 +296,6 @@
 
 <!-- Bump ?v= on every release, so a page never pairs with a cached older script (GitHub Pages caches for 10 minutes). -->
 <script src="vendor/qrcode.js?v=1"></script>
-<script src="app.js?v=20261113-1"></script>
+<script src="app.js?v=20261113-2"></script>
 </body>
 </html>

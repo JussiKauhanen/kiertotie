@@ -75,11 +75,13 @@ const undoStack = [];
 
 const SHAPES = [
   ['([', '])', 'stadium'], ['[(', ')]', 'cylinder'], ['((', '))', 'circle'], ['[[', ']]', 'subroutine'],
-  ['{{', '}}', 'hexagon'], ['[/', '/]', 'box'], ['[\\', '\\]', 'box'], ['[', ']', 'box'],
+  ['{{', '}}', 'hexagon'], ['[/', '/]', 'lean'], ['[\\', '\\]', 'lean'], ['[', ']', 'box'],
   ['(', ')', 'round'], ['{', '}', 'diamond'], ['>', ']', 'flag'],
 ];
 const WRAP = { box: ['[', ']'], round: ['(', ')'], stadium: ['([', '])'], cylinder: ['[(', ')]'], circle: ['((', '))'],
-  subroutine: ['[[', ']]'], hexagon: ['{{', '}}'], diamond: ['{', '}'], flag: ['>', ']'] };
+  subroutine: ['[[', ']]'], hexagon: ['{{', '}}'], diamond: ['{', '}'], flag: ['>', ']'], lean: ['[/', '/]'] };
+// Shapes Mermaid writes by name: id@{ shape: cloud, label: "…" }.
+const NAMED_OUT = { cloud: 'cloud', document: 'doc', queue: 'h-cyl' };
 const ID_RE = /^[\wÀ-￿]+(?:-(?![-.>])[\wÀ-￿]+)*/;
 const EDGE_PLAIN = /^\s*(<)?(-\.+->|-\.+-|={2,}>|={3,}|-{2,}>|-{3,})\s*(?:\|([^|]*)\|)?\s*/;
 const EDGE_TEXT = /^\s*(<)?(--|==|-\.)\s+(.+?)\s+(-{2,}>|={2,}>|\.->|-{3,}|={3,}|\.-)\s*/;
@@ -118,7 +120,9 @@ function readShape(s, i) {
 const NAMED_SHAPES = { rect: 'box', box: 'box', rounded: 'round', round: 'round', stadium: 'stadium', pill: 'stadium',
   cyl: 'cylinder', cylinder: 'cylinder', db: 'cylinder', database: 'cylinder', circle: 'circle', circ: 'circle',
   diam: 'diamond', diamond: 'diamond', decision: 'diamond', hex: 'hexagon', hexagon: 'hexagon', subproc: 'subroutine',
-  subroutine: 'subroutine', odd: 'flag', text: 'text', sticky: 'sticky', note: 'sticky' };
+  subroutine: 'subroutine', odd: 'flag', text: 'text', sticky: 'sticky', note: 'sticky',
+  cloud: 'cloud', doc: 'document', document: 'document', docs: 'document', 'h-cyl': 'queue', das: 'queue', queue: 'queue',
+  'lean-r': 'lean', 'lean-l': 'lean', 'in-out': 'lean', parallelogram: 'lean' };
 
 // id@{ icon: "azure:key-vaults", label: "Secrets" } or id@{ shape: text, label: "..." }
 function readAttrs(s, i) {
@@ -197,10 +201,10 @@ function textOn(fill) {
 }
 // accent: the board style's colour for this frame, used where the item has no colour of its own.
 function colorVars(item, accent = null) {
-  const c = colorsOf(item), v = [];
-  if (c.fill) v.push(`--nf:${c.fill}`); else if (accent?.fill) v.push(`--nf:${accent.fill}`);
+  const c = colorsOf(item), v = [], hollow = c.fill === 'none' || c.fill === 'transparent';
+  if (hollow) v.push('--nf:transparent'); else if (c.fill) v.push(`--nf:${c.fill}`); else if (accent?.fill) v.push(`--nf:${accent.fill}`);
   if (c.stroke) v.push(`--ns:${c.stroke}`); else if (accent?.stroke) v.push(`--ns:${accent.stroke}`);
-  const t = c.color || (c.fill && textOn(c.fill));
+  const t = c.color || (c.fill && !hollow && textOn(c.fill));
   if (t) v.push(`--nt:${t}`);
   return v.length ? ` style="${esc(v.join(';'))}"` : '';
 }
@@ -224,9 +228,11 @@ function splitLines(text) {
 // keep: a diagram that replaces this one keeps the line routes the user picked, like their positions.
 // Undo and loading pass keep: false, since their text carries its own routes.
 function parseInto(text, { replace, keep = true }) {
-  const keptRoutes = new Map(keep ? state.edges.filter(e => e.route || e.color || e.fs || e.ts || e.bend).map(e => [`${e.from}>${e.to}`, { route: e.route, color: e.color, fs: e.fs, ts: e.ts, bend: e.bend }]) : []);
+  const keptRoutes = new Map(keep ? state.edges.filter(e => e.route || e.color || e.fs || e.ts || e.bend || e.sh || e.eh).map(e => [`${e.from}>${e.to}`, { route: e.route, color: e.color, fs: e.fs, ts: e.ts, bend: e.bend, sh: e.sh, eh: e.eh }]) : []);
   // What the user added that Mermaid can't carry stays too: zones, table cells, doc text, images.
   const keptExtra = new Map(keep ? [...state.nodes.values(), ...state.groups.values()].filter(x => x.table || x.body || x.src || x.zone || x.dev).map(x => [x.id, { table: x.table, body: x.body, src: x.src, zone: x.zone, dev: x.dev, sent: x.sent }]) : []);
+  // What only the board keeps about an item (alignment, lock, groups, order, stickers) stays when the assistant redraws it.
+  const keptProps = new Map(keep ? [...[...state.nodes.values()].map(x => [`n:${x.id}`, x.props]), ...[...state.groups.values()].map(x => [`g:${x.id}`, x.props])].filter(([, v]) => v) : []);
   // Pictures exist only on the board, so a whole new diagram from the assistant keeps them, like ink and comments.
   const keptPics = replace && keep ? [...state.nodes.values()].filter(n => n.shape === 'image' && n.src) : [];
   if (replace && !keep) { state.theme = null; state.ink = []; state.comments = []; }
@@ -260,7 +266,7 @@ function parseInto(text, { replace, keep = true }) {
     else if (spec.cls) n.cls = spec.cls;
   };
   const lastIn = new Map(), after = new Map();
-  const pendRoute = new Map(), pendColor = new Map(), pendExtra = new Map(), pendEnds = new Map();
+  const pendRoute = new Map(), pendColor = new Map(), pendExtra = new Map(), pendEnds = new Map(), pendProps = new Map(), pendHeads = new Map();
   const extra = (id, k, v) => (pendExtra.get(id) || pendExtra.set(id, {}).get(id))[k] = v;
   const addEdge = (from, to, label, style, arrow) => {
     const e = state.edges.find(x => x.from === from && x.to === to);
@@ -279,6 +285,8 @@ function parseInto(text, { replace, keep = true }) {
     // Mermaid front matter (---, title: …) carries nothing the board uses.
     if (line === '---' || /^title:\s/.test(line)) continue;
     if ((m = line.match(/^%%\s*@route\s+(\S+)\s+(\S+)\s+(curved|elbow|straight)\s*$/))) { pendRoute.set(`${m[1]}>${m[2]}`, m[3]); continue; }
+    if ((m = line.match(/^%%\s*@props\s+([ngic]:\S+)\s+(\S+)\s*$/))) { try { pendProps.set(m[1], JSON.parse(dec(m[2]))); } catch { /* unreadable */ } continue; }
+    if ((m = line.match(/^%%\s*@heads\s+(\S+)\s+(\S+)\s+(arrow|circle|-)\s+(circle|-)\s*$/))) { pendHeads.set(`${m[1]}>${m[2]}`, { sh: m[3] === '-' ? null : m[3], eh: m[4] === '-' ? null : m[4] }); continue; }
     // Which side a line leaves and enters (r l t b, or - for automatic), and how far its middle is pulled aside.
     if ((m = line.match(/^%%\s*@ends\s+(\S+)\s+(\S+)\s+([rltb-])\s+([rltb-])(?:\s+(-?[\d.]+)\s+(-?[\d.]+))?\s*$/))) {
       pendEnds.set(`${m[1]}>${m[2]}`, { fs: m[3] === '-' ? null : m[3], ts: m[4] === '-' ? null : m[4], bend: m[5] != null && (+m[5] || +m[6]) ? { x: +m[5], y: +m[6] } : null });
@@ -396,6 +404,8 @@ function parseInto(text, { replace, keep = true }) {
     if (!e.color && keptRoutes.get(k)?.color) e.color = keptRoutes.get(k).color;
     const ends = pendEnds.get(k) || keptRoutes.get(k);
     if (ends) for (const f of ['fs', 'ts', 'bend']) { if (ends[f] && !e[f]) e[f] = ends[f]; }
+    const heads = pendHeads.get(k) || keptRoutes.get(k);
+    if (heads) for (const f of ['sh', 'eh']) { if (heads[f] && !e[f]) e[f] = heads[f]; }
   }
   for (const [i, c] of pendColor) if (state.edges[i]) state.edges[i].color = c;
   if (after.size) {
@@ -413,6 +423,7 @@ function parseInto(text, { replace, keep = true }) {
   }
 
   for (const n of keptPics) if (!state.nodes.has(n.id)) state.nodes.set(n.id, { ...n, group: state.groups.has(n.group) ? n.group : null });
+  for (const [k, v] of [...keptProps, ...pendProps]) { const x = itemOf(k); if (x && v && typeof v === 'object') x.props = { ...v }; }
   for (const n of state.nodes.values()) if (n.shape === 'table' && n.label.includes('|')) tableFromLabel(n);
   // An implicit node with a group's id is a link to that group, not a box.
   for (const [id, n] of state.nodes) if (n.implicit && state.groups.has(id)) state.nodes.delete(id);
@@ -443,6 +454,7 @@ function toMermaid() {
   const decl = n => {
     if (n.shape === 'icon') return `${n.id}@{ icon: "${n.icon}", label: ${q(n.label)} }`;
     if (n.shape === 'text') return `${n.id}@{ shape: text, label: ${q(n.label)} }`;
+    if (NAMED_OUT[n.shape]) return `${n.id}@{ shape: ${NAMED_OUT[n.shape]}, label: ${q(n.label)} }`;
     const [o, c] = WRAP[n.shape] || WRAP.box; return `${n.id}${o}${q(n.shape === 'table' ? tableLabel(n) : n.label)}${c}`;
   };
   const emit = (gid, ind) => {
@@ -496,6 +508,9 @@ function canvasLines({ images = true } = {}) {
     L.push(`%% @pos ${id} ${r(p.x)} ${r(p.y)}${p.w ? ` ${r(p.w)} ${r(p.h)}` : ''}`);
   }
   for (const e of state.edges) if (e.route) L.push(`%% @route ${e.from} ${e.to} ${e.route}`);
+  for (const e of state.edges) if (e.sh || e.eh) L.push(`%% @heads ${e.from} ${e.to} ${e.sh || '-'} ${e.eh || '-'}`);
+  for (const [t, list] of [['n', state.nodes.values()], ['g', state.groups.values()], ['i', state.ink], ['c', state.comments]])
+    for (const x of list) if (x.props && Object.keys(x.props).length) L.push(`%% @props ${t}:${x.id} ${enc(JSON.stringify(x.props))}`);
   for (const e of state.edges) if (e.fs || e.ts || e.bend) L.push(`%% @ends ${e.from} ${e.to} ${e.fs || '-'} ${e.ts || '-'}${e.bend ? ` ${r(e.bend.x)} ${r(e.bend.y)}` : ''}`);
   if (state.theme) L.push(`%% @theme ${state.theme}`);
   for (const g of state.groups.values()) if (g.zone) L.push(`%% @zone ${g.id} ${g.zone}`);
@@ -539,6 +554,7 @@ const SIZED_TEXT = n => n && !isUi(n) && !isTicket(n) && !['icon', 'image', 'tab
 // Auto: the largest size, between lo and hi, at which the wrapped text fits w × h. Remembered, as resizing asks often.
 const fitCache = new Map();
 function fitFont(label, w, h, lo, hi, weight = 500) {
+  if (hasMarks(label)) label = plainMarks(label);
   const key = `${label}|${Math.round(w)}|${Math.round(h)}|${lo}|${hi}|${weight}|${state.theme}`;
   if (fitCache.has(key)) return fitCache.get(key);
   const fits = sz => { const ls = wrapLabel(label, w, sz, weight); return ls.length * sz * 1.3 <= h && ls.every(l => textWidth(l, sz, weight) <= w); };
@@ -551,6 +567,11 @@ function fitFont(label, w, h, lo, hi, weight = 500) {
 }
 const lineStep = (fs, base, step) => fs === base ? step : Math.round(fs * 1.3 * 10) / 10;
 
+// The room for text inside a shape of a size.
+function innerOf(shape, w, h) {
+  return shape === 'diamond' ? [w * 0.6, h * 0.6] : shape === 'circle' ? [w * 0.72, h * 0.72] : shape === 'cloud' ? [w * 0.66, h * 0.58]
+    : shape === 'hexagon' || shape === 'flag' || shape === 'lean' ? [w - 52, h - 16] : shape === 'queue' ? [w - 46, h - 16] : shape === 'document' ? [w - 24, h - 26] : [w - 24, h - 16];
+}
 // p: the hand-set size, if the user resized the box.
 function nodeSize(n, p = {}) {
   const fw = p.w, fh = p.h || 0;
@@ -565,7 +586,7 @@ function nodeSize(n, p = {}) {
   }
   if (n.shape === 'sticky') {
     // Auto: short notes write big and long ones small, as on a real sticky note.
-    const w = fw || 160, h0 = fh || w, fs = fsOf(n) || fitFont(n.label, w - 28, h0 - 28, 10, 24), lh = lineStep(fs, 14, 18), lines = wrapLabel(n.label, w - 28, fs);
+    const w = fw || 160, h0 = fh || w, fs = fsOf(n) || fitFont(n.label, w - 28, h0 - 28, 10, 24), lh = lineStep(fs, 14, 18), lines = wrapAny(n.label, w - 28, fs);
     return { w, h: Math.max(h0, lines.length * lh + 28), lines, fs, lh };
   }
   if (n.shape === 'table') {
@@ -586,24 +607,26 @@ function nodeSize(n, p = {}) {
   if (n.shape === 'text') {
     // Auto: a text box resized by its corner scales its text to fill it.
     const fs = fsOf(n) || (fw && fh ? fitFont(n.label, fw - 8, fh - 10, 8, 96, 600) : 16), lh = lineStep(fs, 16, 21);
-    const lines = wrapLabel(n.label, fw ? fw - 8 : 320 * fs / 16, fs, 600);
-    const tw = Math.max(0, ...lines.map(l => textWidth(l, fs, 600)));
+    const lines = wrapAny(n.label, fw ? fw - 8 : 320 * fs / 16, fs, 600);
+    const tw = Math.max(0, ...lines.map(l => lineWidth(l, fs, 600)));
     return { w: fw || Math.max(40, tw + 12), h: Math.max(fh, lines.length * lh + 10), lines, fs, lh };
   }
   // The room for text inside a shape of this size.
-  const inner = (w, h) => n.shape === 'diamond' ? [w * 0.6, h * 0.6] : n.shape === 'circle' ? [w * 0.72, h * 0.72]
-    : n.shape === 'hexagon' || n.shape === 'flag' ? [w - 52, h - 16] : [w - 24, h - 16];
+  const inner = (w, h) => innerOf(n.shape, w, h);
   const fixed = fsOf(n);
   // Auto: the usual 14, and once the box has been resized, whatever fills it.
   const fs = fixed || (fw ? fitFont(n.label, ...inner(fw, fh || 44), 9, 48) : 14), lh = lineStep(fs, 14, 18);
-  const lines = wrapLabel(n.label, fw ? inner(fw, fh || 44)[0] : 200 * fs / 14, fs);
-  const tw = Math.max(...lines.map(l => textWidth(l, fs)));
+  const lines = wrapAny(n.label, fw ? inner(fw, fh || 44)[0] : 200 * fs / 14, fs);
+  const tw = Math.max(...lines.map(l => lineWidth(l, fs)));
   const pad = fs / 14;
   let w = Math.max(100, tw + 32 * pad), h = Math.max(44, lines.length * lh + 24 * pad);
   if (n.shape === 'circle') w = h = Math.max(w, h, 64);
   else if (n.shape === 'diamond') { w = Math.max(110, tw * 1.35 + 52 * pad); h = Math.max(64, lines.length * lh + 46 * pad); }
-  else if (n.shape === 'hexagon' || n.shape === 'flag') w += 24;
+  else if (n.shape === 'hexagon' || n.shape === 'flag' || n.shape === 'lean') w += 24;
   else if (n.shape === 'cylinder') h += 14;
+  else if (n.shape === 'cloud') { w = Math.max(130, w * 1.3); h = Math.max(74, h * 1.45); }
+  else if (n.shape === 'document') h += 12;
+  else if (n.shape === 'queue') w += 22;
   if (fw) { w = fw; h = Math.max(fh, lines.length * lh / (n.shape === 'diamond' ? 0.6 : n.shape === 'circle' ? 0.72 : 1) + (n.shape === 'diamond' || n.shape === 'circle' ? 0 : 16)); }
   return { w, h, lines, fs, lh };
 }
@@ -1030,6 +1053,97 @@ function addLegend() {
   commit('board', 'Added a step legend');
 }
 
+// ---------- whiteboard extras: item props and rich text ----------
+
+// What only the board keeps about an item, by its key (n:id, g:id, i:id, c:id): text alignment, lock, the group
+// it belongs to, its place in the stack, stickers, free arrow ends. Saved as %% @props n:web {"align":"left"}.
+function itemOf(k) {
+  const at = k.indexOf(':'), t = k.slice(0, at), id = k.slice(at + 1);
+  return t === 'n' ? state.nodes.get(id) : t === 'g' ? state.groups.get(id) : t === 'i' ? state.ink.find(x => x.id === id) : t === 'c' ? state.comments.find(x => x.id === id) : null;
+}
+const P = (x, k) => x?.props?.[k];
+function setProp(x, k, v) {
+  if (!x) return;
+  if (v == null || v === false || v === '') { if (x.props) { delete x.props[k]; if (!Object.keys(x.props).length) delete x.props; } }
+  else x.props = { ...(x.props || {}), [k]: v };
+}
+const isLocked = k => !!P(itemOf(k), 'locked');
+
+// Text marks, as on Claude whiteboards: **bold**, *italic*, `code`, [label](https://…), and lines starting
+// "- " or "1. " as list items. Only text that has some goes the slower, marked way.
+const MARK_RE = /\*\*([^*\n]+)\*\*|\*([^*\s][^*\n]*)\*|`([^`\n]+)`|\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/g;
+const LIST_RE = /^\s*(?:([-*•])|(\d+)\.)\s+/;
+const hasMarks = t => /\*\*[^*\n]+\*\*|\*[^*\s][^*\n]*\*|`[^`\n]+`|\]\(https?:|(^|\n)\s*(?:[-*•]|\d+\.)\s/.test(String(t || ''));
+const plainMarks = t => String(t || '').replace(MARK_RE, (m0, b, i, c, l) => b ?? i ?? c ?? l).replace(/(^|\n)\s*[-*•]\s+/g, '$1• ');
+function richRuns(t) {
+  const out = []; let at = 0;
+  for (const m of t.matchAll(MARK_RE)) {
+    if (m.index > at) out.push({ t: t.slice(at, m.index) });
+    out.push(m[1] != null ? { t: m[1], b: 1 } : m[2] != null ? { t: m[2], i: 1 } : m[3] != null ? { t: m[3], c: 1 } : { t: m[4], href: m[5] });
+    at = m.index + m[0].length;
+  }
+  if (at < t.length) out.push({ t: t.slice(at) });
+  return out;
+}
+const MONO = 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace';
+function runWidth(r, fs, weight) {
+  measure.font = `${r.i ? 'italic ' : ''}${r.b ? 700 : weight} ${r.c ? fs * 0.9 : fs}px ${r.c ? MONO : BOARD_STYLES[state.theme]?.font || FONT}`;
+  return measure.measureText(r.t).width + (r.c ? fs * 0.5 : 0);
+}
+// Lines of runs: { runs, lead (the bullet or number on an item's first line), ind (its hanging indent) }.
+function wrapRich(label, maxW, fs = 14, weight = 500) {
+  const out = [];
+  for (const para of String(label).split('\n')) {
+    const lm = LIST_RE.exec(para), lead = lm ? (lm[2] ? `${lm[2]}.` : '•') : '';
+    const ind = lead ? runWidth({ t: `${lead} ` }, fs, weight) : 0;
+    const toks = [];
+    for (const r of richRuns(lm ? para.slice(lm[0].length) : para)) for (const w of r.t.split(/(\s+)/)) if (w) toks.push({ ...r, t: w });
+    let line = [], wNow = 0, first = true;
+    const flush = () => { while (line.length && !line[line.length - 1].t.trim()) line.pop(); out.push({ runs: line, lead: first ? lead : '', ind }); line = []; wNow = 0; first = false; };
+    for (const tk of toks) {
+      const space = !tk.t.trim();
+      if (space && !line.length) continue;
+      const tw = runWidth(tk, fs, weight);
+      if (!space && line.length && wNow + tw > maxW - ind) flush();
+      if (space && !line.length) continue;
+      line.push(tk); wNow += tw;
+    }
+    flush();
+  }
+  // Runs side by side in the same style merge, so the drawing stays small.
+  for (const l of out) l.runs = l.runs.reduce((a, r) => { const p = a[a.length - 1]; if (p && p.b === r.b && p.i === r.i && p.c === r.c && p.href === r.href) p.t += r.t; else a.push({ ...r }); return a; }, []);
+  return out;
+}
+// A label as lines: plain strings for plain text, runs for marked text.
+const wrapAny = (label, maxW, fs, weight = 500) => hasMarks(label) ? wrapRich(label, maxW, fs, weight) : wrapLabel(label, maxW, fs, weight);
+const lineWidth = (l, fs, weight = 500) => typeof l === 'string' ? textWidth(l, fs, weight) : l.ind * !!(l.lead || l.ind) + l.runs.reduce((a, r) => a + runWidth(r, fs, weight), 0);
+function runsSvg(l) {
+  const lead = l.lead ? `<tspan class="rlead">${esc(l.lead)} </tspan>` : '';
+  return lead + l.runs.map(r => {
+    const a = [r.b && 'font-weight="700"', r.i && 'font-style="italic"', r.c && 'class="rcode"', r.href && `class="rlink" data-href="${esc(r.href)}"`].filter(Boolean).join(' ');
+    return a ? `<tspan ${a}>${esc(r.t)}</tspan>` : esc(r.t);
+  }).join('');
+}
+
+// Stickers: emoji on a box that count, so a board can vote. Click one to add a vote, Alt-click to take one off.
+const STICKERS = ['👍', '❤️', '🎉', '⭐', '✅', '❓', '🔥', '👀'];
+function stickersSvg(n, b) {
+  const st = Object.entries(P(n, 'st') || {}).filter(([, c]) => c > 0); if (!st.length) return '';
+  const hgt = 22, gap = 4, ws = st.map(([e, c]) => 30 + (c > 1 ? textWidth(String(c), 11.5, 600) + 4 : 0));
+  let x = b.x + b.w / 2 - ws.reduce((a, w) => a + w + gap, -gap) + 8;
+  const y = b.y - b.h / 2 - hgt / 2 - 2;
+  return st.map(([e, c], i) => {
+    const w = ws[i], g = `<g class="sticker" data-sticker="${esc(n.id)}" data-emoji="${esc(e)}"><title>${c} · click to add one, Alt-click to take one off</title>` +
+      `<rect x="${x}" y="${y - hgt / 2}" width="${w}" height="${hgt}" rx="${hgt / 2}"/><text x="${x + 15}" y="${y + 1}" text-anchor="middle" dominant-baseline="central" class="st-e">${e}</text>` +
+      (c > 1 ? `<text x="${x + 28}" y="${y + 1}" dominant-baseline="central" class="st-n">${c}</text>` : '') + '</g>';
+    x += w + gap; return g;
+  }).join('');
+}
+function addSticker(n, e, d = 1) {
+  const st = { ...(P(n, 'st') || {}) }; st[e] = Math.max(0, (st[e] || 0) + d); if (!st[e]) delete st[e];
+  setProp(n, 'st', Object.keys(st).length ? st : null);
+}
+
 // ---------- rendering ----------
 
 const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -1051,14 +1165,33 @@ function shapeSvg(b) {
     case 'subroutine': return `<rect class="node-shape" x="${x}" y="${y}" width="${w}" height="${h}" rx="3"/>` +
       `<path class="node-shape" d="M${x + 8},${y} v${h} M${-x - 8},${y} v${h}"/>`;
     case 'sticky': return `<rect class="node-shape" x="${x}" y="${y}" width="${w}" height="${h}" rx="3"/>`;
+    case 'lean': { const k = Math.min(18, h * 0.35); return `<polygon class="node-shape" points="${x + k},${y} ${-x},${y} ${-x - k},${-y} ${x},${-y}"/>`; }
+    case 'document': {
+      const a = Math.min(8, h * 0.12), yb = -y - a;
+      return `<path class="node-shape" d="M${x},${y} H${-x} V${yb} C${w * 0.15},${yb + 2.6 * a} ${-w * 0.2},${yb - 2.6 * a} ${x},${yb} Z"/>`;
+    }
+    case 'queue': {
+      const rx = Math.min(10, w * 0.1);
+      return `<path class="node-shape" d="M${x + rx},${y} H${-x - rx} a${rx},${h / 2} 0 0,1 0,${h} H${x + rx} a${rx},${h / 2} 0 0,1 0,${-h} Z"/>` +
+        `<path class="node-shape" d="M${-x - rx},${y} a${rx},${h / 2} 0 0,0 0,${h}" fill="none"/>`;
+    }
+    case 'cloud': {
+      // Bumps on a unit cloud, stretched to the box.
+      const P2 = (u, v) => `${(u * w).toFixed(1)},${(v * h).toFixed(1)}`;
+      return `<path class="node-shape" d="M${P2(-0.3, 0.42)} C${P2(-0.52, 0.42)} ${P2(-0.56, 0.08)} ${P2(-0.38, 0.02)} C${P2(-0.46, -0.28)} ${P2(-0.16, -0.42)} ${P2(-0.04, -0.24)} C${P2(0.04, -0.5)} ${P2(0.4, -0.44)} ${P2(0.36, -0.14)} C${P2(0.56, -0.12)} ${P2(0.56, 0.42)} ${P2(0.3, 0.42)} Z"/>`;
+    }
     case 'text': case 'icon': return `<rect class="node-shape" x="${x}" y="${y}" width="${w}" height="${h}" rx="6"/>`;
     default: return `<rect class="node-shape" x="${x}" y="${y}" width="${w}" height="${h}" rx="6"/>`;
   }
 }
 
-function textSvg(lines, dy = 0, step = 18, fs = null) {
+// align: left or right puts the lines against that side of the room half wide on either side of the middle.
+function textSvg(lines, dy = 0, step = 18, fs = null, align = null, half = 0) {
   const start = -(lines.length - 1) * step / 2 + dy;
-  return `<text text-anchor="middle" dominant-baseline="central"${fs ? ` style="font-size:${fs}px"` : ''}>${lines.map((l, i) => `<tspan x="0" y="${start + i * step}">${esc(l)}</tspan>`).join('')}</text>`;
+  const anchor = align === 'left' ? 'start' : align === 'right' ? 'end' : 'middle', x = align === 'left' ? -half : align === 'right' ? half : 0;
+  const line = (l, i) => typeof l === 'string' ? `<tspan x="${x}" y="${start + i * step}">${esc(l)}</tspan>`
+    : `<tspan x="${align === 'left' && !l.lead && l.ind ? x + l.ind : x}" y="${start + i * step}">${runsSvg(l)}</tspan>`;
+  return `<text text-anchor="${anchor}" dominant-baseline="central"${fs ? ` style="font-size:${fs}px"` : ''}>${lines.map(line).join('')}</text>`;
 }
 
 // What goes inside a node's <g>, centred on 0,0.
@@ -1131,7 +1264,7 @@ function nodeInner(n, b) {
     const lines = b.lines, start = top + 50 + 7;
     return shapeSvg(b) + pic + `<text class="icon-label" text-anchor="middle" dominant-baseline="central">${lines.map((l, i) => `<tspan x="0" y="${start + i * 15}">${esc(l)}</tspan>`).join('')}</text>`;
   }
-  if (n.shape === 'text') return shapeSvg(b) + textSvg(b.lines, 0, b.lh || 21, b.fs);
+  if (n.shape === 'text') return shapeSvg(b) + textSvg(b.lines, 0, b.lh || 21, b.fs, P(n, 'align'), (b.w - 8) / 2);
   if (isTicket(n)) {
     const T = TICKETS[n.shape], t = b.ticket, x0 = -b.w / 2, y0 = -b.h / 2, ty = y0 + 36 + b.lines.length * 18;
     return `<rect class="node-shape" x="${x0}" y="${y0}" width="${b.w}" height="${b.h}" rx="4"/>` +
@@ -1181,7 +1314,8 @@ function nodeInner(n, b) {
     return n.src ? `<rect class="node-shape image-frame" x="${x0}" y="${y0}" width="${b.w}" height="${b.h}" rx="4"/><image href="${n.src}" x="${x0}" y="${y0}" width="${b.w}" height="${b.h}" preserveAspectRatio="xMidYMid meet"/>`
       : `${r} rx="4"/>${textSvg(['Image missing'])}`;
   }
-  return shapeSvg(b) + textSvg(b.lines, n.shape === 'cylinder' ? 4 : 0, b.lh || 18, b.fs);
+  const half = n.shape === 'sticky' ? (b.w - 28) / 2 : innerOf(n.shape, b.w, b.h)[0] / 2;
+  return shapeSvg(b) + textSvg(b.lines, n.shape === 'cylinder' ? 4 : n.shape === 'document' ? -4 : 0, b.lh || 18, b.fs, P(n, 'align'), half);
 }
 
 // Where a line leaves a box: the middle of the side facing the other end.
@@ -1400,7 +1534,7 @@ function render() {
     const geo = edgeGeometry(e, a, b), { d, at } = geo;
     edgeGeo.set(i, geo);
     const on = isSel(`e:${i}`);
-    const marker = e.arrow ? ` marker-end="url(#${on ? 'arrow-sel' : arrowFor(e.color)})"` : '';
+    const marker = markersAttr(headsOf(e), e.color, on);
     let label = '';
     if (e.label) {
       // Pills that grow a little when zoomed out, so a label stays readable in the overview.
@@ -1427,17 +1561,21 @@ function render() {
   });
   html += state.ink.filter(k => k.kind === 'hl').map(inkSvg).join('');
   // Pictures go first of all, under the frames and lines too, so they sit behind the diagram drawn from them.
-  let pics = '';
-  for (const [id, b] of boxes) {
+  let pics = '', stickers = '';
+  // Boxes in their place in the stack: front and back set by hand, otherwise as they come.
+  const zOf = id => P(state.nodes.get(id), 'z') || 0;
+  for (const [id, b] of [...boxes].sort((p1, p2) => zOf(p1[0]) - zOf(p2[0]))) {
     const n = state.nodes.get(id), pic = n.shape === 'image';
     const kind = isUi(n) ? 'ui' : isTicket(n) ? 'ticket' : ['sticky', 'text', 'icon', 'table', 'doc', 'phone', 'browser', 'image'].includes(n.shape) ? n.shape : '';
     // A picture already sent to the chat fades, so the editable diagram stands out; hover or select to compare.
-    const cls = ['node', kind, n.marked && 'marked', isSel(`n:${id}`) && 'sel', drag?.kind === 'connect' && drag.target === id && 'drop-target', flash.has(id) && `flash-${flash.get(id)}`, n.sent && kind === 'image' && 'faded'].filter(Boolean).join(' ');
+    if (P(n, 'st')) stickers += stickersSvg(n, b);
+    const cls = ['node', kind, n.marked && 'marked', P(n, 'locked') && 'locked', isSel(`n:${id}`) && 'sel', ['connect', 'reend', 'iend'].includes(drag?.kind) && drag.target === id && 'drop-target', flash.has(id) && `flash-${flash.get(id)}`, n.sent && kind === 'image' && 'faded'].filter(Boolean).join(' ');
     const a = (!kind || kind === 'table' || kind === 'doc') && accentOf(n.group);
     const g = `<g class="${cls}" data-node="${esc(id)}" transform="translate(${b.x},${b.y})"${colorVars(n, a && { stroke: a })}>${nodeInner(n, b)}</g>`;
     if (pic) pics += g; else html += g;
   }
   html += state.ink.filter(k => k.kind !== 'hl').map(inkSvg).join('');
+  html += stickers;
   if (drag?.kind === 'ink') html += inkSvg(drag.ink);
   html += state.comments.map(commentSvg).join('');
   html += handlesSvg();
@@ -1463,6 +1601,17 @@ function render() {
   renderMinimap();
 }
 
+// A line's two ends: none, arrow or circle. The end follows Mermaid (--> or ---); circles and a start head are the board's.
+const headsOf = e => [e.sh || 'none', e.arrow ? (e.eh === 'circle' ? 'circle' : 'arrow') : 'none'];
+const inkHeads = k => [P(k, 'sh') || 'none', P(k, 'eh') || 'arrow'];
+function dotFor(color) {
+  const id = color === 'sel' ? 'dot-sel' : color ? `dot-${color.replace(/[^\w]/g, '')}` : 'dot';
+  const defs = $('#board defs');
+  if (!defs.querySelector(`#${id}`)) defs.insertAdjacentHTML('beforeend', `<marker id="${id}" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="5.5" markerHeight="5.5"><circle cx="5" cy="5" r="4"${color === 'sel' ? ' class="arrow-head sel"' : color ? ` style="fill:${esc(color)}"` : ' class="arrow-head"'}/></marker>`);
+  return id;
+}
+const markerOf = (kind, color, on) => kind === 'circle' ? dotFor(on ? 'sel' : color) : on ? 'arrow-sel' : arrowFor(color);
+const markersAttr = ([a, b], color, on) => (a !== 'none' ? ` marker-start="url(#${markerOf(a, color, on)})"` : '') + (b !== 'none' ? ` marker-end="url(#${markerOf(b, color, on)})"` : '');
 // Arrow heads in a line's own colour: one marker per colour, made when first needed.
 function arrowFor(color) {
   if (!color) return 'arrow';
@@ -1484,10 +1633,25 @@ function inkPath(pts) {
   }
   return d;
 }
+// An arrow drawn on the board can keep one or both ends on a box (props from and to: {id, side}): those ends
+// follow the box, and the arrow curves out of its side, like the lines between boxes.
+function inkEnds(k) {
+  const a0 = P(k, 'from'), a1 = P(k, 'to'), L = k.pts.length - 1;
+  let s = { x: k.pts[0][0], y: k.pts[0][1], nx: 0, ny: 0 }, t = { x: k.pts[L][0], y: k.pts[L][1], nx: 0, ny: 0 };
+  const ba = a0 && anchorBox(a0.id), bb = a1 && anchorBox(a1.id);
+  if (ba) s = a0.side ? sideAt(ba, a0.side) : sideOf(ba, bb || t);
+  if (bb) t = a1.side ? sideAt(bb, a1.side) : sideOf(bb, ba || s);
+  if (ba) k.pts[0] = [s.x, s.y];
+  if (bb) k.pts[L] = [t.x, t.y];
+  return { s, t, held: !!(ba || bb) };
+}
 function inkSvg(k) {
-  const d = inkPath(k.pts), on = k.id && isSel(`i:${k.id}`), w = inkW(k);
-  const marker = k.kind === 'arrow' ? ` marker-end="url(#${arrowFor(k.color)})"` : '';
-  return `<g class="ink ${k.kind}${on ? ' sel' : ''}${k.id ? '' : ' live'}"${k.id ? ` data-ink="${esc(k.id)}"` : ''} style="--ic:${esc(k.color)};--iw:${w}"><path class="hit" d="${d}" style="stroke-width:${Math.max(14, w + 10)}"/><path class="stroke" d="${d}"${marker}/></g>`;
+  let d;
+  if (k.kind === 'arrow') { const { s, t, held } = inkEnds(k); if (held) { const [c1, c2] = curveCtl(s, t); d = `M${s.x},${s.y} C${c1.x},${c1.y} ${c2.x},${c2.y} ${t.x},${t.y}`; } }
+  d = d || inkPath(k.pts);
+  const on = k.id && isSel(`i:${k.id}`), w = inkW(k);
+  const marker = k.kind === 'arrow' ? markersAttr(inkHeads(k), k.color) : '';
+  return `<g class="ink ${k.kind}${on ? ' sel' : ''}${P(k, 'dash') ? ' dash' : ''}${k.id ? '' : ' live'}"${k.id ? ` data-ink="${esc(k.id)}"` : ''} style="--ic:${esc(k.color)};--iw:${w}"><path class="hit" d="${d}" style="stroke-width:${Math.max(14, w + 10)}"/><path class="stroke" d="${d}"${marker}/></g>`;
 }
 // The stroke being drawn is redrawn on its own while the pen moves, not the whole board.
 function paintLiveInk() {
@@ -1541,6 +1705,13 @@ function handlesSvg() {
     return out;
   }
   // Several items, ink or a comment: a dashed outline around them.
+  if (sel.type === 'ink') {
+    const ik = state.ink.find(x => x.id === sel.id);
+    if (ik?.kind === 'arrow' && !isLocked(`i:${ik.id}`) && drag?.kind !== 'iend') {
+      const L = ik.pts.length - 1;
+      return [0, L].map((i, j) => `<circle class="eend" data-iend="${j}" cx="${ik.pts[i][0]}" cy="${ik.pts[i][1]}" r="${6 / k}"><title>Drag onto a box to attach this end</title></circle>`).join('');
+    }
+  }
   if (sel.type === 'multi' || sel.type === 'ink' || sel.type === 'comment') {
     const b = keysBox(selKeys()); if (!b) return '';
     const m = 6 / k;
@@ -1554,6 +1725,7 @@ function handlesSvg() {
       out += `<circle class="port" data-port="${esc(sel.id)}" data-side="${side}" cx="${b.x + dx * (b.w / 2 + off)}" cy="${b.y + dy * (b.h / 2 + off)}" r="${r}"/>`;
   }
   const inScreen = sel.type === 'node' && deviceOf(state.nodes.get(sel.id)?.group);
+  if (isLocked(keyOf(sel))) return out + `<g class="lock-mark" transform="translate(${b.x + b.w / 2 + 6 / k},${b.y - b.h / 2 - 20 / k}) scale(${1 / k})"><rect width="16" height="16" rx="4"/><g transform="translate(0,0)">${ICON_SVG.lock}</g></g>`;
   if (!(sel.type === 'node' && state.nodes.get(sel.id)?.shape === 'icon') && !inScreen)
     out += `<rect class="handle" data-resize="${sel.type}:${esc(sel.id)}" x="${b.x + b.w / 2 - hs / 2}" y="${b.y + b.h / 2 - hs / 2}" width="${hs}" height="${hs}" rx="${2 / k}"/>`;
   return out;
@@ -1934,7 +2106,8 @@ function keysBox(keys) {
 }
 
 // Everything a drag-select rectangle touches; a frame only when the rectangle holds all of it.
-function keysInRect(r) {
+function keysInRect(r) { return withGroups(keysInRect0(r).filter(k => !isLocked(k))).filter(k => !isLocked(k)); }
+function keysInRect0(r) {
   const out = [], hit = b => b.x - b.w / 2 < r.x1 && b.x + b.w / 2 > r.x0 && b.y - b.h / 2 < r.y1 && b.y + b.h / 2 > r.y0;
   for (const [id, b] of boxes) if (hit(b)) out.push(`n:${id}`);
   for (const [id, b] of groupBoxes) if (b.x - b.w / 2 >= r.x0 && b.x + b.w / 2 <= r.x1 && b.y - b.h / 2 >= r.y0 && b.y + b.h / 2 <= r.y1) out.push(`g:${id}`);
@@ -1950,7 +2123,8 @@ const GRID = 10;
 
 let spaceDown = false;
 function startMove(p, single) {
-  const it = selectionItems();
+  const it = selectionItems(new Set(pickable().filter(k => !isLocked(k))));
+  for (const id of [...it.nodes]) if (isLocked(`n:${id}`)) it.nodes.delete(id);
   // A screen moves as one: its pieces follow it through the layout instead of being moved one by one.
   for (const g of it.groups) if (deviceOf(g) && state.pos.get(g)?.x == null) { const gb = groupBoxes.get(g); state.pos.set(g, { ...state.pos.get(g), x: gb.x, y: gb.y }); }
   const ids = [...it.nodes].filter(id => !(it.groups.has(state.nodes.get(id).group) && deviceOf(state.nodes.get(id).group)) || state.pos.has(id));
@@ -1963,15 +2137,27 @@ function startMove(p, single) {
 }
 
 svg.addEventListener('pointerdown', e => {
-  if (e.button === 1 || (e.button === 0 && spaceDown)) {
-    e.preventDefault(); drag = { kind: 'pan', sx: e.clientX, sy: e.clientY, vx: view.x, vy: view.y };
+  // Pan: the middle or right mouse button, or Space with the left one.
+  closeCmenu();
+  if (e.button === 1 || e.button === 2 || (e.button === 0 && spaceDown)) {
+    e.preventDefault(); drag = { kind: 'pan', sx: e.clientX, sy: e.clientY, vx: view.x, vy: view.y, rb: e.button === 2 };
     svg.setPointerCapture(e.pointerId); return;
   }
   if (e.button !== 0) return;
   closeEditor(true);
   const p = toWorld(e);
+  const linkEl = e.target.closest?.('.rlink');
+  if (linkEl && (e.metaKey || e.ctrlKey)) { e.preventDefault(); (pipWin || window).open(linkEl.dataset.href, '_blank', 'noopener'); return; }
+  const stEl = e.target.closest?.('[data-sticker]');
+  if (stEl && !markMode) {
+    e.preventDefault(); const n = state.nodes.get(stEl.dataset.sticker);
+    if (n) { pushUndo(); addSticker(n, stEl.dataset.emoji, e.altKey ? -1 : 1); commit('board', `${e.altKey ? 'Took' : 'Added'} ${stEl.dataset.emoji} ${e.altKey ? 'off' : 'to'} ${n.id}`); }
+    return;
+  }
   const portEl = e.target.closest('[data-port]'), sizeEl = e.target.closest('[data-resize]');
   if (portEl) { drag = { kind: 'connect', from: portEl.dataset.port, side: portEl.dataset.side, to: p }; svg.setPointerCapture(e.pointerId); return; }
+  const iendEl = e.target.closest('[data-iend]');
+  if (iendEl && sel?.type === 'ink') { drag = { kind: 'iend', id: sel.id, end: +iendEl.dataset.iend, snap: snapshot() }; svg.setPointerCapture(e.pointerId); return; }
   const endEl = e.target.closest('[data-eend]'), midEl = e.target.closest('[data-emid]');
   if ((endEl || midEl) && sel?.type === 'edge') {
     drag = endEl ? { kind: 'reend', i: sel.i, end: endEl.dataset.eend, snap: snapshot() } : { kind: 'bend', i: sel.i, snap: snapshot(), moved: false };
@@ -1987,6 +2173,8 @@ svg.addEventListener('pointerdown', e => {
     e.preventDefault();
     const w = tool === 'hl' ? hlSize : penSize;
     drag = { kind: 'ink', snap: snapshot(), at: [p.x, p.y], sm: [p.x, p.y], ink: { id: null, kind: tool, color: tool === 'hl' ? hlColor : penColor, pts: tool === 'arrow' ? [[p.x, p.y], [p.x, p.y]] : [[p.x, p.y]], ...(w !== INK_W[tool] && { w }) } };
+    const on0 = tool === 'arrow' && keyAt(e.target);
+    if (on0 && on0.startsWith('n:')) drag.ink.props = { from: { id: splitKey(on0)[1] } };
     render(); svg.setPointerCapture(e.pointerId); return;
   }
   if (!markMode && tool === 'eraser') { drag = { kind: 'erase', snap: snapshot(), hit: false, last: [e.clientX, e.clientY] }; eraseAt(e.clientX, e.clientY); svg.setPointerCapture(e.pointerId); return; }
@@ -2002,7 +2190,7 @@ svg.addEventListener('pointerdown', e => {
   const [t, id] = key === 'empty' ? ['', ''] : splitKey(key);
   if (markMode && (t === 'n' || t === 'g')) { toggleMark(t === 'n' ? state.nodes.get(id) : state.groups.get(id), t === 'n' ? 'box' : 'group'); return; }
   if (key === 'empty') {
-    // Drag on empty board: select what the rectangle touches. Space-drag, the middle button or two fingers pan.
+    // Drag on empty board: select what the rectangle touches. Right-drag, Space-drag, the middle button or two fingers pan.
     const base = e.shiftKey ? new Set([...selKeys()].filter(k => !k.startsWith('e:'))) : new Set();
     sel = fromKeys(base); render();
     drag = { kind: 'marquee', x0: p.x, y0: p.y, x1: p.x, y1: p.y, base };
@@ -2011,10 +2199,11 @@ svg.addEventListener('pointerdown', e => {
   } else {
     if (e.shiftKey) {
       const keys = new Set([...selKeys()].filter(k => !k.startsWith('e:')));
-      if (keys.has(key)) keys.delete(key); else keys.add(key);
+      const on = keys.has(key);
+      for (const k of withGroups([key])) if (on) keys.delete(k); else keys.add(k);
       select(fromKeys(keys)); return;
     }
-    if (!isSel(key)) sel = fromKeys([key]);
+    if (!isSel(key)) sel = fromKeys(withGroups([key]));
     render();
     drag = startMove(p, t === 'n' && selKeys().size === 1 ? id : null);
   }
@@ -2073,7 +2262,7 @@ function addPiece(kind) {
 // The eraser removes every stroke it passes over, also between two pointer events when it moves fast.
 function eraseAt(x, y) {
   const k = keyAt(doc().elementFromPoint(x, y) || svg);
-  if (!k || !k.startsWith('i:')) return;
+  if (!k || !k.startsWith('i:') || isLocked(k)) return;
   const id = splitKey(k)[1];
   if (!drag.hit) { pushUndo(drag.snap); drag.hit = true; }
   state.ink = state.ink.filter(x => x.id !== id);
@@ -2090,6 +2279,13 @@ svg.addEventListener('pointermove', e => {
   if (drag.kind === 'pan') { view.x = drag.vx + e.clientX - drag.sx; view.y = drag.vy + e.clientY - drag.sy; moveView(); return; }
   const p = toWorld(e);
   if (drag.kind === 'connect') { drag.to = p; drag.target = connectTarget(p, drag.from); render(); return; }
+  if (drag.kind === 'iend') {
+    const k = state.ink.find(x => x.id === drag.id); if (!k) return;
+    const other = P(k, drag.end ? 'from' : 'to')?.id;
+    setProp(k, drag.end ? 'to' : 'from', null);
+    k.pts[drag.end ? k.pts.length - 1 : 0] = [p.x, p.y];
+    drag.to = p; drag.target = connectTarget(p, other); render(); return;
+  }
   if (drag.kind === 'reend') {
     const ed = state.edges[drag.i];
     drag.to = p; drag.target = connectTarget(p, drag.end === 'from' ? ed.to : ed.from); render(); return;
@@ -2164,6 +2360,7 @@ svg.addEventListener('pointerup', e => {
   const d = drag;
   drag = null;
   if (!d) return;
+  if (d.kind === 'pan') { if (d.rb && Math.hypot(e.clientX - d.sx, e.clientY - d.sy) < 5) rightClick(e); return; }
   if (d.kind === 'marquee') { render(); return; }
   if (d.kind === 'erase') { if (d.hit) commit('board', 'Erased ink'); return; }
   if (d.kind === 'ink') {
@@ -2176,8 +2373,17 @@ svg.addEventListener('pointerup', e => {
       // A click without moving leaves a dot.
       if (k.pts.length < 2) k.pts = [k.pts[0], [k.pts[0][0] + 0.1, k.pts[0][1]]];
     } else {
-      const b = inkBox(k);
-      if (Math.max(b.w - inkW(k), b.h - inkW(k)) * view.k < 6) { render(); return; }
+      const from = P(k, 'from')?.id, to = connectTarget({ x: d.at[0], y: d.at[1] }, from);
+      if (Math.hypot(d.at[0] - k.pts[0][0], d.at[1] - k.pts[0][1]) * view.k < 6 && !(from && to)) { render(); return; }
+      // From a box to a box: a real link between them.
+      if (from && to && to !== from && state.nodes.has(to)) {
+        pushUndo(d.snap); pinAll();
+        const ts = nearSide(anchorBox(to), { x: d.at[0], y: d.at[1] });
+        if (!state.edges.some(x => x.from === from && x.to === to)) state.edges.push({ from, to, label: '', style: 'solid', arrow: true, ...(ts && { ts }) });
+        setTool('select'); sel = { type: 'edge', i: state.edges.findIndex(x => x.from === from && x.to === to) };
+        commit('board', `Linked ${from} → ${to}`); return;
+      }
+      if (to && to !== from) setProp(k, 'to', { id: to, ...(nearSide(anchorBox(to), { x: d.at[0], y: d.at[1] }) && { side: nearSide(anchorBox(to), { x: d.at[0], y: d.at[1] }) }) });
     }
     pushUndo(d.snap);
     k.id = freeInkId();
@@ -2186,9 +2392,46 @@ svg.addEventListener('pointerup', e => {
     if (k.kind === 'arrow') { setTool('select'); select({ type: 'ink', id: k.id }); }
     return;
   }
+  if (d.kind === 'iend') {
+    const k = state.ink.find(x => x.id === d.id); if (!k) { render(); return; }
+    if (!d.to) { render(); return; }
+    pushUndo(d.snap);
+    const end = d.end ? 'to' : 'from', other = P(k, d.end ? 'from' : 'to'), to = d.target;
+    if (to) {
+      const side = nearSide(anchorBox(to), d.to);
+      // Both ends on boxes: it becomes a real link, which the assistant sees too.
+      if (other && other.id !== to && state.nodes.has(to) && state.nodes.has(other.id)) {
+        const from = d.end ? other.id : to, dest = d.end ? to : other.id, [h0, h1] = inkHeads(k);
+        if (!state.edges.some(x => x.from === from && x.to === dest)) {
+          pinAll();
+          state.edges.push({ from, to: dest, label: '', style: P(k, 'dash') ? 'dotted' : 'solid', arrow: h1 !== 'none', ...(h1 === 'circle' && { eh: 'circle' }), ...(h0 !== 'none' && { sh: h0 }),
+            ...(k.color !== INK_COLORS[0] && { color: k.color }), ...((d.end ? other.side : side) && { fs: d.end ? other.side : side }), ...((d.end ? side : other.side) && { ts: d.end ? side : other.side }) });
+          state.ink = state.ink.filter(x => x !== k);
+          sel = { type: 'edge', i: state.edges.length - 1 };
+          commit('board', `Linked ${from} → ${dest}`); return;
+        }
+      }
+      setProp(k, end, { id: to, ...(side && { side }) });
+    }
+    commit('board', to ? `Attached the arrow to ${to}` : 'Moved the arrow end'); return;
+  }
   if (d.kind === 'bend') { if (d.moved) { pushUndo(d.snap); commit('board', 'Bent the line'); } return; }
   if (d.kind === 'reend') {
     const ed = state.edges[d.i], fixed = d.end === 'from' ? ed?.to : ed?.from, to = ed && d.to && connectTarget(d.to, fixed);
+    const g = edgeGeo.get(d.i), was = g && g.at(d.end === 'from' ? 0 : 1);
+    if (!to && ed && d.to && was && Math.hypot(d.to.x - was.x, d.to.y - was.y) * view.k > 24) {
+      pushUndo(d.snap);
+      const fixedPt = g.at(d.end === 'from' ? 1 : 0), fixedSide = d.end === 'from' ? ed.ts : ed.fs, [h0, h1] = headsOf(ed);
+      const k = { id: freeInkId(), kind: 'arrow', color: ed.color || INK_COLORS[0], w: 1.6, pts: d.end === 'to' ? [[fixedPt.x, fixedPt.y], [d.to.x, d.to.y]] : [[d.to.x, d.to.y], [fixedPt.x, fixedPt.y]] };
+      setProp(k, d.end === 'to' ? 'from' : 'to', { id: fixed, ...(fixedSide && { side: fixedSide }) });
+      if (h0 !== 'none') setProp(k, 'sh', h0);
+      if (h1 !== 'arrow') setProp(k, 'eh', h1);
+      if (ed.style === 'dotted') setProp(k, 'dash', 1);
+      state.edges.splice(d.i, 1); state.ink.push(k); sel = { type: 'ink', id: k.id };
+      commit('board', `The line from ${fixed} now ends on the board`);
+      if (ed.label) toast(`Its label "${ed.label}" went with it: a line that ends on the board has none.`, 4500);
+      return;
+    }
     if (!to) { render(); return; }
     const [f, t2] = d.end === 'from' ? [to, ed.to] : [ed.from, to];
     if (to !== ed[d.end] && state.edges.some(x => x !== ed && x.from === f && x.to === t2)) { toast('Those two are linked already'); render(); return; }
@@ -2241,6 +2484,8 @@ svg.addEventListener('pointerup', e => {
   }
 });
 
+// The right button pans the board, so the browser's own menu stays out of the way there.
+svg.addEventListener('contextmenu', e => e.preventDefault());
 svg.addEventListener('wheel', e => {
   e.preventDefault();
   const mouseWheel = e.deltaMode === 1 || (e.deltaX === 0 && Math.abs(e.deltaY) >= 50 && Number.isInteger(e.deltaY));
@@ -2271,6 +2516,7 @@ function moveView() {
 
 function doubleClick(key, p) {
   drag = null;
+  if (key !== 'empty' && isLocked(key)) { select(fromKeys([key])); toast('Locked: unlock it to edit'); return; }
   const [kind, ...rest] = key.split(':'), ref = rest.join(':');
   if (kind === 'n') openEditor({ type: 'node', id: ref });
   else if (kind === 'e') openEditor({ type: 'edge', i: +ref });
@@ -2384,6 +2630,15 @@ function openEditor(target) {
   ta.addEventListener('keydown', ev => {
     if (ev.key === 'Enter' && (multiline ? ev.metaKey || ev.ctrlKey : !ev.shiftKey)) { ev.preventDefault(); closeEditor(true); }
     if (ev.key === 'Escape') { ev.preventDefault(); closeEditor(false); }
+    // Marks: Ctrl+B bold, Ctrl+I italic, Ctrl+K a link, Ctrl+E code, around what is selected.
+    const mk = (ev.metaKey || ev.ctrlKey) && !ev.shiftKey && { b: ['**', '**'], i: ['*', '*'], e: ['`', '`'], k: ['[', '](https://)'] }[ev.key.toLowerCase()];
+    if (mk && target.type !== 'comment') {
+      ev.preventDefault();
+      const { selectionStart: a, selectionEnd: z, value: v } = ta, mid = v.slice(a, z) || (ev.key.toLowerCase() === 'k' ? 'link' : 'text');
+      ta.value = v.slice(0, a) + mk[0] + mid + mk[1] + v.slice(z);
+      if (ev.key.toLowerCase() === 'k') ta.setSelectionRange(a + mk[0].length + mid.length + 2, a + mk[0].length + mid.length + 10);
+      else ta.setSelectionRange(a + mk[0].length, a + mk[0].length + mid.length);
+    }
   });
   ta.addEventListener('blur', () => closeEditor(true));
 }
@@ -2428,7 +2683,9 @@ function deleteSelection() {
   pushUndo();
   if (sel.type === 'edge') { const e = state.edges[sel.i]; state.edges.splice(sel.i, 1); commit('board', `Removed link ${e.from} → ${e.to}`); }
   else {
-    const keys = [...selKeys()];
+    const all = [...selKeys()], keys = all.filter(k => !isLocked(k));
+    if (!keys.length) { undoStack.pop(); toast('Locked: unlock it first'); return; }
+    if (keys.length < all.length) toast('Locked things stay. Unlock them to delete them.');
     for (const k of keys) {
       const [t, id] = splitKey(k);
       if (t === 'n' || t === 'g') removeItem(id);
@@ -2536,14 +2793,19 @@ function subsetMermaid(clip) {
   try { return toMermaid(); } finally { Object.assign(state, keep); }
 }
 
-function pasteClip(clip) {
+function pasteClip(clip, at = null) {
   pushUndo(); pinAll();
   const map = new Map();
   const take = old => { const base = old.replace(/\d+$/, '') || 'n'; const id = freeId(base); map.set(old, id); return id; };
   // Same board: a little down and right of the original. Another board: in the middle of the view.
   const b0 = clip.pos.length ? clip.pos.reduce((a, [, p]) => ({ x0: Math.min(a.x0, p.x), x1: Math.max(a.x1, p.x), y0: Math.min(a.y0, p.y), y1: Math.max(a.y1, p.y) }), { x0: Infinity, x1: -Infinity, y0: Infinity, y1: -Infinity }) : null;
   const c = viewCentre();
-  const d = clip.board === boardId || !b0 ? { x: 30, y: 30 } : { x: c.x - (b0.x0 + b0.x1) / 2, y: c.y - (b0.y0 + b0.y1) / 2 };
+  const d = at && b0 ? { x: at.x - (b0.x0 + b0.x1) / 2, y: at.y - (b0.y0 + b0.y1) / 2 }
+    : clip.board === boardId || !b0 ? { x: 30, y: 30 } : { x: c.x - (b0.x0 + b0.x1) / 2, y: c.y - (b0.y0 + b0.y1) / 2 };
+  // A pasted group is a new group of its own.
+  const grpMap = new Map(), used = new Set(allKeys().map(k => P(itemOf(k), 'grp')));
+  const regroup = x => { const gp = P(x, 'grp'); if (!gp) return x; if (!grpMap.has(gp)) { let n = 1; while (used.has(`G${n}`)) n++; used.add(`G${n}`); grpMap.set(gp, `G${n}`); } x.props = { ...x.props, grp: grpMap.get(gp) }; return x; };
+  for (const x of [...clip.nodes, ...clip.groups, ...clip.ink, ...clip.comments]) regroup(x);
   for (const g of clip.groups) { const id = take(g.id); state.groups.set(id, { ...g, id }); }
   for (const g of clip.groups) { const ng = state.groups.get(map.get(g.id)); ng.parent = map.get(g.parent) || (state.groups.has(g.parent) ? g.parent : null); }
   for (const n of clip.nodes) { const id = take(n.id); state.nodes.set(id, { ...n, id, group: map.get(n.group) || (state.groups.has(n.group) ? n.group : null) }); }
@@ -2597,7 +2859,8 @@ function frameSelection() {
 }
 
 function nudge(dx, dy) {
-  const it = selectionItems(); if (!it.nodes.size && !it.ink.size && !it.comments.size) return;
+  const it = selectionItems(new Set(pickable().filter(k => !isLocked(k))));
+  for (const id of [...it.nodes]) if (isLocked(`n:${id}`)) it.nodes.delete(id); if (!it.nodes.size && !it.ink.size && !it.comments.size) return;
   pushUndo(); pinAll();
   for (const id of it.nodes) { const p = state.pos.get(id); state.pos.set(id, { ...p, x: p.x + dx, y: p.y + dy }); }
   for (const g of it.groups) { const p = state.pos.get(g); if (p?.w) state.pos.set(g, { ...p, x: p.x + dx, y: p.y + dy }); }
@@ -2614,19 +2877,23 @@ onDoc('keydown', e => {
   const k = e.key.toLowerCase();
   if (mod && (k === 'y' || (k === 'z' && e.shiftKey))) { e.preventDefault(); redo(); }
   else if (mod && k === 'z') { e.preventDefault(); undo(); }
+  else if (mod && k === 'g') { e.preventDefault(); if (e.shiftKey) ungroupSel(); else groupSel(); }
+  else if (mod && e.shiftKey && k === 'l') { e.preventDefault(); lockSel(!pickable().some(isLocked)); }
+  else if (mod && (e.key === ']' || e.key === '[')) { e.preventDefault(); stackSel(e.key === ']'); }
   else if (mod && (k === 'c' || k === 'x')) {
     const clip = sel && sel.type !== 'edge' && copySelection(); if (!clip) return;
     e.preventDefault(); copyText(clip.text);
     if (k === 'x') deleteSelection(); else toast('Copied. Paste here, on another board, or in the chat.');
   }
   else if (mod && k === 'd') { e.preventDefault(); const clip = sel && copySelection(); if (clip) pasteClip(clip); }
-  else if (mod && k === 'a') { e.preventDefault(); select(fromKeys([...[...state.nodes.keys()].map(id => `n:${id}`), ...state.ink.map(x => `i:${x.id}`), ...state.comments.map(x => `c:${x.id}`)])); }
+  else if (mod && k === 'a') { e.preventDefault(); selectAll(); }
   else if (e.key.startsWith('Arrow') && sel && sel.type !== 'edge') {
     e.preventDefault(); const st = e.shiftKey ? 10 : 1;
     nudge(e.key === 'ArrowLeft' ? -st : e.key === 'ArrowRight' ? st : 0, e.key === 'ArrowUp' ? -st : e.key === 'ArrowDown' ? st : 0);
   }
   else if (e.key === ' ' && !e.repeat) { e.preventDefault(); spaceDown = true; svg.classList.add('panning'); }
   else if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); deleteSelection(); }
+  else if (e.key === 'Escape' && !$('#cmenu').hidden) closeCmenu();
   else if (e.key === 'Escape' && drag?.kind === 'ink') { drag = null; render(); }
   else if (e.key === 'Escape') { select(null); setTool('select'); if (markMode) setMarkMode(false); }
   else if (mod || e.altKey) return;
@@ -2669,6 +2936,96 @@ onDoc('paste', e => {
   const r = applyText(text, 'paste');
   if (r.mergeOffer) showNote('Pasted a diagram', r.warnings || [], r.mergeOffer, r.message);
 });
+
+// ---------- organising: groups, lock, stacking order, the right-click menu ----------
+
+const allKeys = () => [...[...state.nodes.keys()].map(id => `n:${id}`), ...[...state.groups.keys()].map(id => `g:${id}`), ...state.ink.map(k => `i:${k.id}`), ...state.comments.map(c => `c:${c.id}`)];
+// A click on one thing in a group picks the whole group.
+function withGroups(keys) {
+  const grps = new Set([...keys].map(k => P(itemOf(k), 'grp')).filter(Boolean));
+  if (!grps.size) return [...keys];
+  return [...new Set([...keys, ...allKeys().filter(k => grps.has(P(itemOf(k), 'grp')))])];
+}
+const pickable = () => [...selKeys()].filter(k => !k.startsWith('e:'));
+function groupSel() {
+  const keys = pickable();
+  if (keys.length < 2) { toast('Select two or more things to group them'); return; }
+  pushUndo();
+  const used = new Set(allKeys().map(k => P(itemOf(k), 'grp'))); let n = 1; while (used.has(`G${n}`)) n++;
+  for (const k of keys) setProp(itemOf(k), 'grp', `G${n}`);
+  commit('board', `Grouped ${keys.length} items`);
+}
+function ungroupSel() {
+  const keys = withGroups(pickable()).filter(k => P(itemOf(k), 'grp'));
+  if (!keys.length) return;
+  pushUndo(); for (const k of keys) setProp(itemOf(k), 'grp', null); commit('board', 'Ungrouped');
+}
+function lockSel(on) {
+  const keys = pickable(); if (!keys.length) return;
+  pushUndo(); for (const k of keys) setProp(itemOf(k), 'locked', on ? 1 : null);
+  commit('board', on ? `Locked ${keys.length === 1 ? splitKey(keys[0])[1] : `${keys.length} items`}` : 'Unlocked');
+}
+// Front and back: boxes take a place in the stack; ink moves to the end or start of its list.
+function stackSel(front) {
+  const keys = pickable(), nodes = keys.filter(k => k.startsWith('n:')).map(itemOf).filter(Boolean), inks = new Set(keys.filter(k => k.startsWith('i:')).map(k => splitKey(k)[1]));
+  if (!nodes.length && !inks.size) return;
+  pushUndo();
+  const zs = [...state.nodes.values()].map(n => P(n, 'z') || 0), top = Math.max(0, ...zs), bot = Math.min(0, ...zs);
+  nodes.forEach((n, i) => setProp(n, 'z', front ? top + 1 + i : bot - nodes.length + i));
+  if (inks.size) { const a = state.ink.filter(k => inks.has(k.id)), b = state.ink.filter(k => !inks.has(k.id)); state.ink = front ? [...b, ...a] : [...a, ...b]; }
+  commit('board', front ? 'Brought to front' : 'Sent to back');
+}
+
+// The right-click menu: for what is under the pointer, or for the empty board there.
+let cmenuAt = null;
+function rightClick(e) {
+  const k = keyAt(doc().elementFromPoint(e.clientX, e.clientY) || svg);
+  if (k && !isSel(k)) sel = k.startsWith('e:') ? { type: 'edge', i: +splitKey(k)[1] } : fromKeys(withGroups([k]));
+  if (!k) sel = null;
+  render(); openCmenu(e.clientX, e.clientY);
+}
+function openCmenu(cx, cy) {
+  const m = $('#cmenu'), wrap = $('.board-wrap').getBoundingClientRect();
+  cmenuAt = toWorld({ clientX: cx, clientY: cy });
+  const keys = pickable(), edge = sel?.type === 'edge', locked = keys.some(isLocked), grouped = keys.some(k => P(itemOf(k), 'grp'));
+  const it = (act, label, kb = '', off = false) => `<button class="mi cm" data-cm="${act}" role="menuitem"${off ? ' disabled' : ''}><span class="mi-t"><b>${label}</b></span>${kb ? `<kbd>${kb}</kbd>` : ''}</button>`;
+  const sep = '<div class="menu-sep"></div>', M = key, clip = !!readClip();
+  let html = '';
+  if (keys.length || edge) {
+    html += edge ? '' : it('cut', 'Cut', `${M}X`) + it('copy', 'Copy', `${M}C`) + it('dup', 'Duplicate', `${M}D`);
+    if (clip) html += it('paste', 'Paste here', `${M}V`);
+    if (keys.length) html += sep + it('front', 'Bring to front', `${M}]`) + it('back', 'Send to back', `${M}[`) + sep +
+      (keys.length > 1 ? it('group', 'Group', `${M}G`) : '') + (grouped ? it('ungroup', 'Ungroup', `${M}⇧G`) : '') +
+      (locked ? it('unlock', 'Unlock', `${M}⇧L`) : it('lock', 'Lock', `${M}⇧L`));
+    if (sel?.type === 'node' && !isUi(state.nodes.get(sel.id))) html += `<div class="cm-stickers" role="group" aria-label="Stickers">${STICKERS.map(x => `<button data-cm="st" data-emoji="${x}" title="Add ${x}">${x}</button>`).join('')}</div>`;
+    html += sep + it('del', 'Delete', 'Del', keys.length > 0 && keys.every(isLocked));
+  } else {
+    html += (clip ? it('paste', 'Paste here', `${M}V`) + sep : '') + it('sticky', 'Sticky note here', 'N') + it('text', 'Text here', 'T') +
+      it('shape', 'Box here', 'R') + it('frame', 'Frame here') + sep + it('all', 'Select all', `${M}A`) + it('fit', 'Fit to screen', 'F');
+  }
+  m.innerHTML = html.replace(/^(<div class="menu-sep"><\/div>)+/, ''); m.hidden = false;
+  const w = m.offsetWidth, h = m.offsetHeight;
+  m.style.left = `${Math.max(8, Math.min(cx - wrap.left, wrap.width - w - 8))}px`;
+  m.style.top = `${Math.max(8, Math.min(cy - wrap.top, wrap.height - h - 8))}px`;
+}
+function closeCmenu() { const m = $('#cmenu'); if (m && !m.hidden) m.hidden = true; }
+function selectAll() { select(fromKeys(allKeys().filter(k => !k.startsWith('g:') && !isLocked(k)))); }
+function cmenuAct(a, el) {
+  const p = cmenuAt; closeCmenu();
+  if (a === 'cut' || a === 'copy') { const clip = copySelection(); if (clip) { copyText(clip.text); if (a === 'cut') deleteSelection(); else toast('Copied. Paste here, on another board, or in the chat.'); } }
+  if (a === 'dup') { const clip = copySelection(); if (clip) pasteClip(clip); }
+  if (a === 'paste') { const clip = readClip(); if (clip) pasteClip(clip, p); }
+  if (a === 'front' || a === 'back') stackSel(a === 'front');
+  if (a === 'group') groupSel();
+  if (a === 'ungroup') ungroupSel();
+  if (a === 'lock' || a === 'unlock') lockSel(a === 'lock');
+  if (a === 'st' && sel?.type === 'node') { const n = state.nodes.get(sel.id); pushUndo(); addSticker(n, el.dataset.emoji); commit('board', `Added ${el.dataset.emoji} to ${n.id}`); }
+  if (a === 'del') deleteSelection();
+  if (a === 'sticky' || a === 'text' || a === 'frame') placeItem(a, p);
+  if (a === 'shape') placeItem('shape', p, { shape: 'box' });
+  if (a === 'all') selectAll();
+  if (a === 'fit') fit();
+}
 
 // ---------- minimap ----------
 
@@ -3114,11 +3471,17 @@ const PALETTE = [
 ];
 const STICKY = PALETTE[1];
 const SHAPE_NAMES = [['box', 'Box'], ['round', 'Rounded'], ['stadium', 'Pill'], ['circle', 'Circle'], ['diamond', 'Decision'],
-  ['cylinder', 'Database'], ['hexagon', 'Hexagon'], ['sticky', 'Sticky note'], ['text', 'Text'], ['table', 'Table'], ['doc', 'Doc'],
+  ['cylinder', 'Database'], ['hexagon', 'Hexagon'], ['lean', 'Input / output'], ['document', 'Document'], ['queue', 'Queue'], ['cloud', 'Cloud'], ['sticky', 'Sticky note'], ['text', 'Text'], ['table', 'Table'], ['doc', 'Doc'],
   ['phone', 'Phone screen'], ['browser', 'Browser window'], ...Object.entries(TICKETS).map(([k, t]) => [k, `Ticket: ${t.name}`])];
 const ICON_SVG = {
   straight: '<path d="M3 13 L13 3"/>', curved: '<path d="M3 13 C3 6, 13 10, 13 3"/>', elbow: '<path d="M3 13 H8 V3 H13"/>',
   solid: '<path d="M2 8 H14"/>', dotted: '<path d="M2 8 H14" stroke-dasharray="2.5 2"/>', thick: '<path d="M2 8 H14" stroke-width="3.2"/>',
+  'ta-left': '<path d="M2.5 4 H13.5 M2.5 8 H9.5 M2.5 12 H11.5"/>', 'ta-center': '<path d="M2.5 4 H13.5 M4.5 8 H11.5 M3.5 12 H12.5"/>', 'ta-right': '<path d="M2.5 4 H13.5 M6.5 8 H13.5 M4.5 12 H13.5"/>',
+  hollow: '<rect x="2.5" y="3.5" width="11" height="9" rx="2" fill="none" stroke-dasharray="2.2 1.6"/>',
+  smile: '<circle cx="8" cy="8" r="5.5" fill="none"/><path d="M5.8 9.3 C6.8 10.8 9.2 10.8 10.2 9.3"/><circle cx="6.2" cy="6.6" r=".6"/><circle cx="9.8" cy="6.6" r=".6"/>',
+  lock: '<rect x="3.5" y="7" width="9" height="6.5" rx="1.5"/><path d="M5.5 7 V5.2 A2.5 2.5 0 0 1 10.5 5.2 V7"/>',
+  more: '<circle cx="3.5" cy="8" r="1.1"/><circle cx="8" cy="8" r="1.1"/><circle cx="12.5" cy="8" r="1.1"/>',
+  'h-none': '<path d="M2 8 H14"/>', 'h-arrow': '<path d="M2 8 H13 M9 4 L13 8 L9 12"/>', 'h-circle': '<path d="M2 8 H10"/><circle cx="12" cy="8" r="2.2"/>',
   arrow: '<path d="M2 8 H13 M9 4 L13 8 L9 12"/>', reset: '<path d="M3.5 8 A4.5 4.5 0 1 0 5 4.6 M3.5 2.5 V5.5 H6.5"/>', trash: '<path d="M3 4.5 H13 M6 4.5 V3 H10 V4.5 M4.5 4.5 L5.2 13 H10.8 L11.5 4.5"/>',
   mark: '<path d="M3 13 L5 11 L11 5 L13 7 L7 13 Z M10 4 L12 2 L14 4 L12 6"/>',
   'al-left': '<path d="M2.5 2 V14 M5 5 H13 M5 11 H9"/>', 'al-center': '<path d="M8 2 V14 M3 5 H13 M5 11 H11"/>', 'al-right': '<path d="M13.5 2 V14 M3 5 H11 M7 11 H11"/>',
@@ -3129,12 +3492,20 @@ const glyph = name => `<svg viewBox="0 0 16 16" width="16" height="16" aria-hidd
 
 let ctxKey = '';
 // Text size: Auto (with the size it comes to now), or a size of your own.
-const FONT_SIZES = [10, 12, 14, 16, 18, 20, 24, 28, 32, 40, 48, 64, 80];
+const FONT_SIZES = [10, 12, 14, 16, 18, 20, 24, 28, 32, 40, 48, 64, 80, 96];
+// The two ends of a line, each clicked through none, arrow and circle.
+const headButtons = ([a, b], attr = 'data-head') => `<button ${attr}="start" class="head-start" title="Start: ${a} (click for the next)">${glyph(`h-${a}`)}</button>` +
+  `<button ${attr}="end" title="End: ${b} (click for the next)">${glyph(`h-${b}`)}</button>`;
+// The named sizes, as on Claude whiteboards.
+const SIZE_NAMES = { 14: 'Small', 16: 'Body', 28: 'Large', 48: 'Title', 96: 'Huge' };
 function fontPick(cur, autoNow) {
   const list = cur && !FONT_SIZES.includes(cur) ? [...FONT_SIZES, cur].sort((a, b) => a - b) : FONT_SIZES;
   return `<select data-font-size class="font-pick" title="Text size: Auto fits the text to the box">` +
-    `<option value=""${cur ? '' : ' selected'}>${autoNow ? `Auto · ${autoNow}` : 'Auto'}</option>${list.map(v => `<option value="${v}"${cur === v ? ' selected' : ''}>${v}</option>`).join('')}</select>`;
+    `<option value=""${cur ? '' : ' selected'}>${autoNow ? `Auto · ${autoNow}` : 'Auto'}</option>${list.map(v => `<option value="${v}"${cur === v ? ' selected' : ''}>${SIZE_NAMES[v] ? `${SIZE_NAMES[v]} · ${v}` : v}</option>`).join('')}</select>`;
 }
+// Shapes that can be outline only: the plain ones, not notes, text, pictures or cards.
+const OUTLINE_OK = n => n && !isUi(n) && !isTicket(n) && !['sticky', 'text', 'icon', 'image', 'table', 'doc', 'phone', 'browser'].includes(n.shape);
+let stickerRow = null; // the box whose sticker row is open
 function setFontSize(items, v) {
   pushUndo();
   for (const n of items) {
@@ -3146,7 +3517,7 @@ function setFontSize(items, v) {
 
 function renderCtx() {
   const el = $('#ctx'); if (!el) return;
-  const hide = !sel || drag?.moved || drag?.kind === 'connect' || drag?.kind === 'reend' || drag?.kind === 'marquee' || editor || markMode;
+  const hide = !sel || drag?.moved || drag?.kind === 'connect' || drag?.kind === 'reend' || drag?.kind === 'iend' || drag?.kind === 'marquee' || editor || markMode;
   if (hide) { el.hidden = true; ctxKey = ''; return; }
   let html, b;
   const del = `<button data-del title="Delete (Del)">${glyph('trash')}</button>`;
@@ -3163,8 +3534,8 @@ function renderCtx() {
     html = `<select data-line-type title="Line type"><option value="">Line type…</option>${Object.entries(LINE_TYPES).map(([k, t]) => `<option value="${k}">${t.name}</option>`).join('')}</select><span class="ctx-sep"></span>` +
       ['straight', 'curved', 'elbow'].map(r => `<button data-route="${r}" aria-pressed="${route === r}" title="${r[0].toUpperCase() + r.slice(1)} line">${glyph(r)}</button>`).join('') +
       '<span class="ctx-sep"></span>' +
-      ['solid', 'dotted', 'thick'].map(s => `<button data-estyle="${s}" aria-pressed="${e.style === s}" title="${s[0].toUpperCase() + s.slice(1)}">${glyph(s)}</button>`).join('') +
-      `<button data-arrow aria-pressed="${e.arrow}" title="Arrow head">${glyph('arrow')}</button>` +
+      ['solid', 'dotted', 'thick'].map(s => `<button data-estyle="${s}" aria-pressed="${e.style === s}" title="${{ solid: 'Solid', dotted: 'Dashed', thick: 'Thick' }[s]}">${glyph(s)}</button>`).join('') +
+      '<span class="ctx-sep"></span>' + headButtons(headsOf(e)) +
       (e.fs || e.ts || e.bend ? `<button data-ereset title="Back to automatic sides, no bend">${glyph('reset')}</button>` : '') + '<span class="ctx-sep"></span>' +
       sw(EDGE_COLORS, Math.max(0, EDGE_COLORS.findIndex(x => x.fill === e.color)), 'data-ecolor', 'var(--edge)') +
       `<span class="ctx-sep"></span>${del}`;
@@ -3172,13 +3543,14 @@ function renderCtx() {
     const k = state.ink.find(x => x.id === sel.id); if (!k) { el.hidden = true; return; }
     b = inkBox(k);
     const list = k.kind === 'hl' ? HL_COLORS : INK_COLORS, sizes = INK_SIZES[k.kind === 'hl' ? 'hl' : 'pen'];
-    html = sw(list, list.indexOf(k.color), 'data-icolor') + '<span class="ctx-sep"></span>' +
+    const arrowBits = k.kind === 'arrow' ? headButtons(inkHeads(k), 'data-ihead') + `<button data-idash aria-pressed="${!!P(k, 'dash')}" title="Dashed">${glyph('dotted')}</button><span class="ctx-sep"></span>` : '';
+    html = sw(list, list.indexOf(k.color), 'data-icolor') + '<span class="ctx-sep"></span>' + arrowBits +
       sizes.map((v, i) => `<button class="size-dot" data-isize="${v}" aria-pressed="${v === inkW(k)}" title="${['Thin', 'Medium', 'Thick'][i]}"><i style="--d:${[4, 8, 13][i]}px;--sw:${k.color}"></i></button>`).join('') +
-      `<span class="ctx-sep"></span>${del}`;
+      `<span class="ctx-sep"></span>${del}<button data-more title="More (or right-click)">${glyph('more')}</button>`;
   } else if (sel.type === 'comment') {
     const c = state.comments.find(x => x.id === sel.id); if (!c) { el.hidden = true; return; }
     b = commentBox(c);
-    html = `<button data-edit-comment>Edit</button>${del}`;
+    html = `<button data-edit-comment>Edit</button>${del}<button data-more title="More (or right-click)">${glyph('more')}</button>`;
   } else if (sel.type === 'multi') {
     b = keysBox(selKeys()); if (!b) { el.hidden = true; return; }
     const boxesSel = [...selKeys()].filter(k => k.startsWith('n:')).length;
@@ -3187,7 +3559,8 @@ function renderCtx() {
       (boxesSel > 1 ? al('left', 'Align left') + al('center', 'Align centres') + al('right', 'Align right') + al('top', 'Align top') + al('middle', 'Align middles') + al('bottom', 'Align bottom') +
         (boxesSel > 2 ? al('hspace', 'Space evenly across') + al('vspace', 'Space evenly down') : '') + '<span class="ctx-sep"></span>' : '') +
       (multiTextNodes().length ? fontPick(sameFs(multiTextNodes())) + '<span class="ctx-sep"></span>' : '') +
-      `<button data-frame-it title="Put them in a frame">Frame</button><span class="ctx-count">${selKeys().size}</span>${del}`;
+      `<button data-frame-it title="Put them in a frame">Frame</button><span class="ctx-count">${selKeys().size}</span>${del}` +
+      `<button data-more title="More: front, back, group, lock… (or right-click)">${glyph('more')}</button>`;
   } else {
     const item = sel.type === 'node' ? state.nodes.get(sel.id) : state.groups.get(sel.id);
     b = sel.type === 'node' ? boxes.get(sel.id) : groupBoxes.get(sel.id);
@@ -3207,8 +3580,17 @@ function renderCtx() {
       : isIcon ? '<button data-swap-icon title="Pick another icon">Change icon</button>'
       : isImage ? '' : `<select data-shape-pick title="Shape">${SHAPE_NAMES.map(([v, t]) => `<option value="${v}"${item.shape === v ? ' selected' : ''}>${t}</option>`).join('')}</select>`;
     const sized = sel.type === 'node' && SIZED_TEXT(item) ? fontPick(fsOf(item), fsOf(item) ? null : Math.round(b.fs || 14)) : '';
-    html = swatches + pick + sized +
-      `<button data-markitem aria-pressed="${!!item.marked}" title="Highlight for your next request">${glyph('mark')}</button>` + del;
+    const al = P(item, 'align') || 'center';
+    const align = sel.type === 'node' && SIZED_TEXT(item) ? `<button data-talign title="Text: ${al} (click for the next)">${glyph(`ta-${al}`)}</button>` : '';
+    const hollow = c.fill === 'none' || c.fill === 'transparent';
+    const outline = sel.type === 'node' && OUTLINE_OK(item) ? `<button data-hollow aria-pressed="${hollow}" title="Outline only">${glyph('hollow')}</button>` : '';
+    const rowOpen = stickerRow === sel.id;
+    const stick = sel.type === 'node' && !isUi(item) ? `<button data-sticker-row aria-pressed="${rowOpen}" title="Stickers: add one to vote">${glyph('smile')}</button>` : '';
+    const lock = P(item, 'locked') ? `<button data-unlock title="Locked: click to unlock">${glyph('lock')}</button>` : '';
+    html = (lock || (swatches + pick + sized + align + outline)) + stick +
+      `<button data-markitem aria-pressed="${!!item.marked}" title="Highlight for your next request">${glyph('mark')}</button>` + (lock ? '' : del) +
+      `<button data-more title="More: front, back, group, lock… (or right-click)">${glyph('more')}</button>` +
+      (rowOpen && stick ? `<div class="ctx-stickers">${STICKERS.map(e => `<button data-add-sticker="${e}" title="Add ${e}">${e}</button>`).join('')}</div>` : '');
   }
   if (html !== ctxKey) { el.innerHTML = html; ctxKey = html; }
   el.hidden = false;
@@ -3246,6 +3628,7 @@ function setColor(items, i) {
 function ctxClick(e) {
   const t = e.target.closest('button'); if (!t || !sel) return;
   if (t.dataset.del != null) return deleteSelection();
+  if (t.dataset.more != null) { const r = t.getBoundingClientRect(); openCmenu(r.left, r.bottom + 6); return; }
   if (sel.type === 'multi') {
     if (t.dataset.color != null) {
       const items = [...selKeys()].map(k => { const [ty, id] = splitKey(k); return ty === 'n' ? state.nodes.get(id) : ty === 'g' ? state.groups.get(id) : null; }).filter(Boolean);
@@ -3257,6 +3640,11 @@ function ctxClick(e) {
   }
   if (sel.type === 'ink') {
     const k = state.ink.find(x => x.id === sel.id); if (!k) return;
+    if (t.dataset.ihead) {
+      const [a, b] = inkHeads(k), nx = { none: 'arrow', arrow: 'circle', circle: 'none' }, start = t.dataset.ihead === 'start', v = nx[start ? a : b];
+      pushUndo(); setProp(k, start ? 'sh' : 'eh', start ? (v === 'none' ? null : v) : (v === 'arrow' ? null : v)); commit('board', 'Changed the arrow ends'); return;
+    }
+    if (t.dataset.idash != null) { pushUndo(); setProp(k, 'dash', P(k, 'dash') ? null : 1); commit('board', 'Changed the arrow'); return; }
     if (t.dataset.isize != null) { pushUndo(); k.w = +t.dataset.isize; if (k.w === INK_W[k.kind]) delete k.w; commit('board', 'Changed the stroke size'); return; }
     if (t.dataset.icolor == null) return;
     pushUndo(); k.color = (k.kind === 'hl' ? HL_COLORS : INK_COLORS)[+t.dataset.icolor]; commit('board', 'Recoloured ink'); return;
@@ -3265,12 +3653,27 @@ function ctxClick(e) {
   const item = sel.type === 'edge' ? state.edges[sel.i] : sel.type === 'node' ? state.nodes.get(sel.id) : state.groups.get(sel.id);
   if (!item) return;
   if (t.dataset.color != null) return setColor([item], +t.dataset.color);
+  if (t.dataset.stickerRow != null) { stickerRow = stickerRow === sel.id ? null : sel.id; ctxKey = ''; renderCtx(); return; }
+  if (t.dataset.addSticker) { pushUndo(); addSticker(item, t.dataset.addSticker); commit('board', `Added ${t.dataset.addSticker} to ${item.id}`); return; }
+  if (t.dataset.unlock != null) { pushUndo(); setProp(item, 'locked', null); commit('board', `Unlocked ${item.id}`); return; }
+  if (t.dataset.talign != null) { const nx = { center: 'left', left: 'right', right: null }[P(item, 'align') || 'center']; pushUndo(); setProp(item, 'align', nx); commit('board', `Text ${nx || 'centred'}`); return; }
+  if (t.dataset.hollow != null) {
+    pushUndo(); const c = colorsOf(item);
+    if (c.fill === 'none' || c.fill === 'transparent') { delete item.style.fill; if (!Object.keys(item.style).length) delete item.style; }
+    else item.style = { ...(item.style || {}), fill: 'none', ...(c.stroke ? {} : { stroke: '#5d6778' }) };
+    commit('board', `Outline ${c.fill === 'none' ? 'off' : 'only'} for ${item.id}`); return;
+  }
   if (t.dataset.markitem != null) return toggleMark(item, sel.type === 'node' ? 'box' : 'group');
   if (t.dataset.swapIcon != null) return openPop('icon', { target: sel.id });
   pushUndo();
   if (t.dataset.route) { if (t.dataset.route === 'curved') delete item.route; else item.route = t.dataset.route; }
   if (t.dataset.estyle) item.style = t.dataset.estyle;
   if (t.dataset.arrow != null) item.arrow = !item.arrow;
+  if (t.dataset.head) {
+    const [a, b] = headsOf(item), nx = { none: 'arrow', arrow: 'circle', circle: 'none' };
+    if (t.dataset.head === 'start') { const v = nx[a]; if (v === 'none') delete item.sh; else item.sh = v; }
+    else { const v = nx[b]; item.arrow = v !== 'none'; if (v === 'circle') item.eh = 'circle'; else delete item.eh; }
+  }
   if (t.dataset.ereset != null) { delete item.fs; delete item.ts; delete item.bend; }
   if (t.dataset.ecolor != null) { const c = EDGE_COLORS[+t.dataset.ecolor].fill; if (c) item.color = c; else delete item.color; }
   commit('board', `Changed link ${item.from} → ${item.to}`);
@@ -3479,7 +3882,7 @@ Keep links short:
 - Short ids of 2 to 5 characters, and keep the ids the diagram already has.
 
 The diagram is a Mermaid flowchart:
-- Boxes: web[Web app]. Shapes: [box] (rounded) ([pill]) [(database)] ((circle)) {decision}.
+- Boxes: web[Web app]. Shapes: [box] (rounded) ([pill]) [(database)] ((circle)) {decision} [/input or output/], and q1@{ shape: h-cyl, label: "Queue" } with cloud, doc or h-cyl. In labels: **bold**, *italic*, and lines starting "- " for lists.
 - Links: a --> b, with text a -->|HTTPS| b, dotted a -.-> b. For a flow, start the labels with ① ② ③.
 - Sections: put each part of a bigger board, such as a journey or an area, in its own subgraph: subgraph asis["As-is: contacting YIT"] ... end. Sections stack as rows. Don't write separate heading texts.
 - Boundaries inside: subgraph rg["Resource group: prod"] ... end. Named by kind they get their own look: Azure subscription, Resource group, Virtual network, Subnet, On-premises, DMZ, Power Platform environment, External system.
@@ -3517,6 +3920,9 @@ function boardNotes() {
   for (const n of state.nodes.values()) {
     if (n.shape === 'doc' && n.body) L.push(`Doc ${n.id} "${n.label}": ${n.body.replace(/\n/g, ' / ')}`);
   }
+  // Stickers count as votes, so the assistant hears them.
+  const votes = [...state.nodes.values()].filter(n => P(n, 'st')).map(n => `${n.id} (${plainMarks(n.label).replace(/\n/g, ' ')}) ${Object.entries(P(n, 'st')).map(([e, c]) => `${e}${c > 1 ? `×${c}` : ''}`).join(' ')}`);
+  if (votes.length) L.push('Stickers on the board, as votes:', ...votes);
   return L.length ? `\n${L.join('\n')}\n` : '';
 }
 
@@ -3531,7 +3937,7 @@ function donePacket(request = '', pics = [], inImage = false) {
 ${toMermaid()}
 \`\`\`
 ${boardNotes()}
-Reply in the same Kiertotie format, with only the changes. My comments and docs, if any, are listed after the diagram.${pics.length ? `\n${pictureLine(pics, inImage)}` : ''}
+Reply in the same Kiertotie format, with only the changes. My comments, docs and stickers, if any, are listed after the diagram.${pics.length ? `\n${pictureLine(pics, inImage)}` : ''}
 My request: ${request}`;
 }
 
@@ -3962,7 +4368,8 @@ function downloadSvg() { const e = exportSvg(); if (!e) return toast('Nothing to
 const xmlEsc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const b64 = str => btoa(unescape(encodeURIComponent(str)));
 const DRAWIO_SHAPES = { box: 'rounded=1;arcSize=8;', round: 'rounded=1;arcSize=25;', stadium: 'rounded=1;arcSize=50;', circle: 'ellipse;', diamond: 'rhombus;',
-  cylinder: 'shape=cylinder3;boundedLbl=1;size=8;', hexagon: 'shape=hexagon;perimeter=hexagonPerimeter2;size=0.15;', subroutine: 'shape=process;', flag: 'shape=step;perimeter=stepPerimeter;',
+  cylinder: 'shape=cylinder3;boundedLbl=1;size=8;', lean: 'shape=parallelogram;perimeter=parallelogramPerimeter;fixedSize=1;size=14;',
+  document: 'shape=document;boundedLbl=1;size=0.2;', queue: 'shape=cylinder3;direction=south;boundedLbl=1;size=10;', cloud: 'ellipse;shape=cloud;', hexagon: 'shape=hexagon;perimeter=hexagonPerimeter2;size=0.15;', subroutine: 'shape=process;', flag: 'shape=step;perimeter=stepPerimeter;',
   sticky: 'rounded=0;strokeColor=none;shadow=1;fillColor=#fff59d;', text: 'text;align=center;verticalAlign=middle;fontSize=16;fontStyle=1;', doc: 'rounded=1;arcSize=4;align=left;verticalAlign=top;spacing=10;',
   table: 'shape=table;', phone: 'rounded=1;arcSize=12;verticalAlign=top;', browser: 'rounded=1;arcSize=3;verticalAlign=top;' };
 function exportDrawio() {
@@ -3988,6 +4395,8 @@ function exportDrawio() {
     }
     if (n.shape === 'table') { style = 'html=1;whiteSpace=wrap;overflow=fill;rounded=0;'; value = `<b>${xmlEsc(n.label)}</b><table border="1" style="border-collapse:collapse;width:100%">${(n.table || []).map((r, i) => `<tr>${r.map(x => { const cp = cellParts(x); return `<${i ? 'td' : 'th'}${cp.fill ? ` style="background:${cp.fill};color:#1d2330"` : ''}>${xmlEsc(cp.text)}</${i ? 'td' : 'th'}>`; }).join('')}</tr>`).join('')}</table>`; }
     if (n.shape === 'doc') value = `<b>${xmlEsc(n.label)}</b><br>${xmlEsc(n.body || '').replace(/\n/g, '<br>')}`;
+    else if (SIZED_TEXT(n) && hasMarks(n.label)) value = String(n.label).split('\n').map(l => { const lm = LIST_RE.exec(l); return (lm ? `${lm[2] ? `${lm[2]}.` : '•'} ` : '') + richRuns(lm ? l.slice(lm[0].length) : l).map(r => { const t = xmlEsc(r.t); return r.b ? `<b>${t}</b>` : r.i ? `<i>${t}</i>` : r.c ? `<code>${t}</code>` : r.href ? `<a href="${xmlEsc(r.href)}">${t}</a>` : t; }).join(''); }).join('<br>');
+    if (P(n, 'align') && SIZED_TEXT(n)) style += `align=${P(n, 'align')};`;
     if (c.fill && n.shape !== 'icon') style += `fillColor=${c.fill};`;
     if (c.stroke) style += `strokeColor=${c.stroke};`;
     if (c.color) style += `fontColor=${c.color};`;
@@ -3996,7 +4405,7 @@ function exportDrawio() {
   }
   state.edges.forEach((e, i) => {
     if (!anchorBox(e.from) || !anchorBox(e.to)) return;
-    const style = `${e.route === 'elbow' ? 'edgeStyle=orthogonalEdgeStyle;rounded=1;' : routeOf(e) === 'curved' ? 'curved=1;' : 'edgeStyle=none;'}html=1;endArrow=${e.arrow ? 'classic' : 'none'};` +
+    const style = `${e.route === 'elbow' ? 'edgeStyle=orthogonalEdgeStyle;rounded=1;' : routeOf(e) === 'curved' ? 'curved=1;' : 'edgeStyle=none;'}html=1;startArrow=${{ none: 'none', arrow: 'classic', circle: 'oval' }[headsOf(e)[0]]};endArrow=${{ none: 'none', arrow: 'classic', circle: 'oval' }[headsOf(e)[1]]};` +
       `${e.style === 'dotted' ? 'dashed=1;' : ''}${e.style === 'thick' ? 'strokeWidth=3;' : ''}${e.color ? `strokeColor=${e.color};` : ''}`;
     cells.push(`<mxCell id="e${i}" value="${xmlEsc(e.label)}" style="${style}" edge="1" parent="1" source="${cid(e.from)}" target="${cid(e.to)}"><mxGeometry relative="1" as="geometry"/></mxCell>`);
   });
@@ -4396,6 +4805,10 @@ $('#icon-q').addEventListener('keydown', e => {
   if (e.key === 'Enter') { const b = $('#icon-grid [data-icon]'); if (b) pickIcon(b.dataset.icon); }
 });
 $('#ctx').addEventListener('click', ctxClick);
+$('#cmenu').addEventListener('click', e => { const b = e.target.closest('[data-cm]'); if (b && !b.disabled) cmenuAct(b.dataset.cm, b); });
+$('#cmenu').addEventListener('contextmenu', e => e.preventDefault());
+onDoc('pointerdown', e => { if (!e.target.closest?.('#cmenu, [data-more]')) closeCmenu(); });
+svg.addEventListener('wheel', closeCmenu, { passive: true });
 $('#tpd-grid').addEventListener('click', e => { const b = e.target.closest('[data-tpl]'); if (b) useTemplate(b.dataset.tpl); });
 $('#tpd-side').addEventListener('click', e => { const b = e.target.closest('[data-tcat]'); if (b) { tplCat = b.dataset.tcat; $('#tpd-q').value = ''; paintTplDialog(); } });
 $('#tpd-q').addEventListener('input', () => { tplCat = 'All'; paintTplDialog(); });
