@@ -4378,6 +4378,12 @@ async function done() {
   $('#ask').value = ''; $('#ask').style.height = '';
   pushChat({ who: 'me', text: request || 'Here is my board as it is now.', pics: r.pics, marked: markedItems().length });
   pushChat({ who: 'sys', kind: r.pics ? (r.oneImage ? 'one' : 'two') : 'copied' });
+  // Every Send floats the board again, as Start does, so it stays in view next to the chat and the next
+  // link hands its diagram to it instead of opening as a board tab. The copy is done by now, so the
+  // floating window taking the focus can't cancel it, and the key press or click still counts for opening it.
+  // A link tab that floats stays open, since closing it would close the float; without a float it closes
+  // as before, and the browser returns to the chat.
+  if (!pipWin && canFloat && await floatBoard({ quiet: true })) return;
   if (!pipWin && !pics.length && openedByLink) { window.close(); }
 }
 
@@ -4398,13 +4404,14 @@ window.addEventListener('storage', e => {
 // in view while you work in the Copilot tab. This tab has to stay open: closing it closes the float.
 const canFloat = 'documentPictureInPicture' in window;
 
+// quiet: Send floats the board by itself, so a browser that refuses stays silent. Returns whether it floats.
 async function floatBoard(opts = {}) {
-  if (pipWin && !opts.reset) { pipWin.focus(); return; }
-  if (!canFloat) { toast('This browser cannot float a window. Chrome and Edge can.', 4000); return; }
+  if (pipWin && !opts.reset) { pipWin.focus(); return true; }
+  if (!canFloat) { if (!opts.quiet) toast('This browser cannot float a window. Chrome and Edge can.', 4000); return false; }
   let w;
   // reset: the default size and place, instead of where the float was last.
   try { w = await documentPictureInPicture.requestWindow({ width: 560, height: 640, preferInitialWindowPlacement: !!opts.reset }); }
-  catch (err) { toast(`The browser did not open the floating window (${err.name}).`, 4000); return; }
+  catch (err) { if (!opts.quiet) toast(`The browser did not open the floating window (${err.name}).`, 4000); return false; }
   for (const sheet of document.styleSheets) {
     try {
       const st = w.document.createElement('style');
@@ -4431,6 +4438,7 @@ async function floatBoard(opts = {}) {
   // The floating window gets its final size a moment after it opens: fit again once it has.
   w.requestAnimationFrame(() => fit()); setTimeout(fit, 150); setTimeout(fit, 500);
   log('board', 'Board is floating');
+  return true;
 }
 
 function dockBoard() {

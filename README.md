@@ -9,7 +9,7 @@ https://jussikauhanen.github.io/kiertotie/
 1. **Start:** Kiertotie opens on **home**. Pick the chat you use (Microsoft 365 Copilot, Copilot, ChatGPT, Claude, Gemini or another chat), or **Work by hand** for a blank board. Then type what to draw (or paste or add a screenshot to replicate) and press **Start with …**. That click copies the instructions and floats the board, and the chat panel beside the board shows the steps, with an **Open …** button for your chat. In the chat, press Ctrl+V (⌘V) and send.
 2. **The assistant answers** with one line saying what it drew, an **Open in Kiertotie** link, and a short footer. Click the link. The board updates, the link's tab closes itself, and the assistant's line shows in the chat panel with what changed and an **Undo**.
 3. **Edit** on the board if you like: drag, double-click to rename, Delete to remove, Shift-drag to connect. The flag on the left rail (**Highlight**, M) marks the boxes your request is about; they show above the message box.
-4. **Type your next request** in the chat panel and press Enter. That copies the board and your request; paste it into the chat and send. Back to step 2.
+4. **Type your next request** in the chat panel and press Enter. That copies the board and your request and floats the board again if it isn't floating; paste it into the chat and send. Back to step 2.
 
 Only the first paste carries the instructions. Later pastes carry the diagram, your highlights, the request and one line, "Reply in the same Kiertotie format".
 
@@ -21,9 +21,9 @@ The assistant you pick is remembered. Change it at the top of the chat panel, or
 
 ## Floating board (Chrome and Edge)
 
-**Start** floats the board for you. **⧉ Float** does it later, for example on a tab that a link opened. The board moves into a small window that stays on top of every other window (Document Picture-in-Picture), so it stays in view while you work in the chat. A link tab hands its diagram to the floating board and closes itself, and the browser returns you to the chat.
+**Start** floats the board for you, and so does every **Send** when the board isn't floating. **⧉ Float** does it by hand, for example on a tab that a link opened. The board moves into a small window that stays on top of every other window (Document Picture-in-Picture), so it stays in view while you work in the chat. A link tab hands its diagram to the floating board and closes itself, and the browser returns you to the chat.
 
-Keep the Kiertotie tab open (in the background is fine), because closing it closes the floating board. That tab turns yellow, with arrows pointing at the floating window. **Bring it back here** in that tab, or closing the floating window, puts the board back in the tab. If no floating board is open, a link tab becomes the board, and **Send** closes that tab again.
+Keep the Kiertotie tab open (in the background is fine), because closing it closes the floating board. That tab turns yellow, with arrows pointing at the floating window. **Bring it back here** in that tab, or closing the floating window, puts the board back in the tab. If no floating board is open, a link tab becomes the board. **Send** in that tab floats the board from it, and the tab stays open to keep the float; in a browser that can't float, Send closes the tab again.
 
 **With Copilot in the Edge sidebar** you can skip the paste in step 4: just ask. The sidebar reads the open board directly, through a hidden text description that includes the highlights and the reply rules.
 
